@@ -1,0 +1,92 @@
+// ===== Trail grammar (expression layer; declarations appended in Task 3) =====
+
+// ----- expressions: left-recursive for LALR, correct associativity -----
+?expr: ternary
+?ternary: or_e "if" or_e "else" ternary        -> ternary
+        | or_e
+?or_e: or_e "or" and_e                          -> bool_or
+     | and_e
+?and_e: and_e "and" not_e                       -> bool_and
+      | not_e
+?not_e: "not" not_e                             -> not_
+      | cmp
+?cmp: coal CMP_OP coal                          -> compare
+    | coal "in" "(" literal ("," literal)* ")"  -> in_
+    | coal
+?coal: coal "??" sum                            -> coalesce
+     | sum
+?sum: sum SUM_OP prod                           -> arith
+    | prod
+?prod: prod MUL_OP pow_                         -> arith
+     | pow_
+?pow_: unary "^" pow_                           -> power
+     | unary
+?unary: "-" unary                               -> neg
+      | pinned
+?pinned: atom "@" NAME                          -> pinned
+       | atom
+?atom: call
+     | ref
+     | literal
+     | "(" expr ")"
+call: NAME "(" [arg ("," arg)*] ")" ("by" dotted)?
+?arg: NAME "=" expr                             -> kwarg
+    | expr
+ref: NAME ("." NAME)*
+dotted: NAME ("." NAME)*
+?literal: NUMBER                                -> number
+        | STRING                               -> string
+        | "true"                               -> true
+        | "false"                              -> false
+
+CMP_OP: "==" | "!=" | ">=" | "<=" | ">" | "<"
+SUM_OP: "+" | "-"
+MUL_OP: "*" | "/" | "%"
+NUMBER: /[0-9][0-9_]*(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+STRING: /"[^"]*"/
+NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
+
+%import common.WS
+%ignore WS
+%ignore /#[^\n]*/
+
+// ===== declarations (Task 3) =====
+start: decl+
+?decl: universe_decl | model_decl | signal_decl | func_def
+     | strategy_decl | backtest_decl | learn_decl | import_decl
+
+func_def: "def" NAME "(" [NAME ("," NAME)*] ")" "=" expr
+import_decl: "import" STRING
+universe_decl: "universe" NAME "=" dotted ("where" expr)?
+model_decl: "model" NAME ("on" NAME)? ("period" PERIOD)? "{" model_stmt+ "}"
+?model_stmt: "desc" STRING                  -> desc_stmt
+           | "on_missing" POLICY            -> policy_stmt
+           | "export" NAME "=" expr         -> export_stmt
+           | "score" NAME "weight" NUMBER "{" score_case+ "else" NUMBER "}" -> score_stmt
+           | NAME "=" expr                  -> assign_stmt
+score_case: NUMBER "if" expr
+signal_decl: "signal" NAME ("on" NAME)? ("period" PERIOD)? "=" expr
+
+strategy_decl: "strategy" NAME "{" strat_field+ "}"
+strat_field: "universe" NAME | "signal" expr | "rebalance" PERIOD
+           | "select" "top" NUMBER ("where" expr)? | "weighting" WEIGHTING
+           | "hold_band" NUMBER ".." NUMBER | "costs" NAME
+           | "gate" expr | "fallback" NAME | "exposure" expr
+backtest_decl: "backtest" NAME "from" DATE "to" DATE "{" bt_field+ "}"
+bt_field: "benchmark" dotted | "pit_lag" DURATION | "report" NAME ("," NAME)*
+learn_decl: "learn" "weights" "for" NAME "{" learn_field+ "}"
+learn_field: "segment" "by" dotted ("," dotted)* | "target" expr
+           | "method" NAME | "validate" expr
+
+PERIOD: "annual" | "quarterly" | "monthly" | "daily"
+POLICY: "skip" | "zero" | "median"
+WEIGHTING: "equal" | "value" | "signal"
+DATE: /\d{4}-\d{2}(-\d{2})?/
+DURATION: /\d+[dmy]/
+
+// ===== REPL dialect (interactive only; NOT valid in a model file) =====
+// A repl line is a superset of the file grammar: a meta-command, a declaration,
+// or a bare expression. Meta-commands return a catalog result, never a panel.
+repl_line: meta_command | decl | expr
+meta_command: "?"            -> meta_catalog
+            | "?" dotted     -> meta_describe

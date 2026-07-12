@@ -1,0 +1,56 @@
+universe all_active = stocks where meta.is_active
+
+model performance on all_active period annual {
+    desc "v1 performance.pel translation (fixture-field subset)"
+
+    revenue_cagr = cagr(income.revenue, 4)
+    score revenue_growth_score weight 7 {
+        2 if revenue_cagr > 0.15
+        1 if revenue_cagr > 0.05
+        else 0
+    }
+
+    operating_margin = income.operating_income / income.revenue
+    score operating_margin_score weight 7 {
+        2 if operating_margin > 0.12
+        1 if operating_margin > 0.05
+        else 0
+    }
+
+    net_profit_margin = income.net_income / income.revenue
+    score net_margin_score weight 8 {
+        2 if net_profit_margin > 0.08
+        1 if net_profit_margin > 0.05
+        else 0
+    }
+
+    interest_coverage = income.operating_income / income.interest_expense
+    score interest_coverage_score weight 6 {
+        2 if interest_coverage > 5
+        1 if interest_coverage > 2.5
+        else 0
+    }
+
+    debt_to_equity = balance.total_debt / balance.total_equity
+    score debt_to_equity_score weight 5 {
+        2 if debt_to_equity < 0.5
+        1 if debt_to_equity < 1
+        else 0
+    }
+
+    current_ratio = balance.current_assets / balance.current_liabilities
+    score current_ratio_score weight 7 {
+        2 if current_ratio > 1.5
+        1 if current_ratio > 0.8
+        else 0
+    }
+
+    fcf_per_share = cash.free_cash_flow / income.weighted_average_shares_diluted
+    score fcf_trend_score weight 7 {
+        2 if roll_mean(fcf_per_share, 3) > roll_mean(fcf_per_share, 5)
+        else 0
+    }
+
+    export composite = weighted_score()
+    export revenue_growth = revenue_cagr
+}

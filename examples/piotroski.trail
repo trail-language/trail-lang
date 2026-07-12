@@ -1,0 +1,25 @@
+universe all_active = stocks where meta.is_active
+
+model piotroski on all_active period annual {
+    desc "Piotroski F-Score (9 binary signals)"
+
+    roa        = income.net_income / avg2(balance.total_assets)
+    cfo_assets = cash.cfo / avg2(balance.total_assets)
+    ltd_ratio  = balance.long_term_debt / avg2(balance.total_assets)
+    cur_ratio  = balance.current_assets / balance.current_liabilities
+    gm         = income.gross_profit / income.revenue
+    turnover   = income.revenue / avg2(balance.total_assets)
+
+    f_roa_pos  = roa > 0
+    f_cfo_pos  = cash.cfo > 0
+    f_droa     = roa > lag(roa, 1)
+    f_accrual  = cfo_assets > roa
+    f_leverage = ltd_ratio < lag(ltd_ratio, 1)
+    f_liquid   = cur_ratio > lag(cur_ratio, 1)
+    f_noissue  = (cash.stock_issued ?? 0) == 0
+    f_margin   = gm > lag(gm, 1)
+    f_turnover = turnover > lag(turnover, 1)
+
+    export fscore = count(f_roa_pos, f_cfo_pos, f_droa, f_accrual, f_leverage,
+                          f_liquid, f_noissue, f_margin, f_turnover)
+}

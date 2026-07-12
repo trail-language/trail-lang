@@ -85,6 +85,16 @@ def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
             _check_expr(e.orelse, defined, out)
 
 
+def _phase_warnings(decl, out: list[Issue]) -> None:
+    """Constructs that parse but whose full semantics land in a later phase."""
+    if getattr(decl, "on_missing", None) == "median":
+        out.append(Issue("warning", "W-MEDIAN-DEFERRED",
+                         "on_missing median is treated as skip until phase 2"))
+    if decl.period != "annual":
+        out.append(Issue("warning", "W-PERIOD-DEFERRED",
+                         f"period '{decl.period}' runs with annual-frequency semantics until phase 2"))
+
+
 def validate(program: ast.Program) -> list[Issue]:
     out: list[Issue] = []
     universes = {d.name for d in program.decls if isinstance(d, ast.UniverseDecl)}
@@ -103,6 +113,7 @@ def validate(program: ast.Program) -> list[Issue]:
             case ast.UniverseDecl() if decl.where is not None:
                 _check_expr(decl.where, set(), out)
             case ast.ModelDecl():
+                _phase_warnings(decl, out)
                 if decl.universe is not None and decl.universe not in universes:
                     out.append(Issue("error", "E-UNIVERSE-UNKNOWN",
                                      f"model '{decl.name}' references unknown universe '{decl.universe}'"))
@@ -121,6 +132,7 @@ def validate(program: ast.Program) -> list[Issue]:
                                          f"'{st.name}' is already defined in model '{decl.name}'"))
                     defined.add(st.name)
             case ast.SignalDecl():
+                _phase_warnings(decl, out)
                 if decl.universe is not None and decl.universe not in universes:
                     out.append(Issue("error", "E-UNIVERSE-UNKNOWN",
                                      f"signal '{decl.name}' references unknown universe '{decl.universe}'"))

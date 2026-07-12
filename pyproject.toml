@@ -1,14 +1,35 @@
 [project]
 name = "trail-lang"
 version = "0.1.0"
-description = "Trail — a declarative expression language for financial indicators, scoring, and screening over security panels"
+description = "A declarative expression language for financial indicators, scoring, and screening over security panels"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Usman Shahid", email = "u.manshahid@gmail.com" }]
+keywords = ["finance", "quant", "factor", "screening", "indicators", "expression-language", "polars"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "lark>=1.2",
     "polars>=1.20",
     "click>=8.1",
     "pyyaml>=6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/trail-language"
+Repository = "https://github.com/trail-language/trail-py"
+Specification = "https://github.com/trail-language/spec"
+Issues = "https://github.com/trail-language/trail-py/issues"
 
 [project.scripts]
 trail = "trail.cli:main"

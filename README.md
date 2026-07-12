@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/trail-language/spec/main/brand/icon-color-240.png" alt="Trail" width="120">
+</p>
+
 # trail-py
 
-The reference implementation of **Trail** — a small, total, declarative language for computing
+The reference implementation of **Trail** - a small, total, declarative language for computing
 financial indicators, scores, and screening strategies over panels of securities. Trail
 expressions compile to vectorized [Polars](https://pola.rs) operations.
 

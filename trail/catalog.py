@@ -145,6 +145,46 @@ def _kv(title: str, pairs: list[tuple[str, str]]) -> CatalogResult:
     return CatalogResult(title, frame)
 
 
+def _source_detail(name: str, spec) -> CatalogResult:
+    """Source metadata plus a best-effort coverage view for a discoverable source.
+
+    Instantiating a source can fail (e.g. a missing credential); that is reported
+    inline rather than raised, so discovery stays usable without a live connection.
+    """
+    from trail.registry import resolve_driver
+    from trail.source import SupportsCapabilities, SupportsDiscovery
+
+    rows: list[tuple[str, str]] = [("driver", spec.driver), ("options", str(spec.options))]
+    try:
+        src = resolve_driver(spec.driver)(spec.options)
+    except Exception as e:  # instantiation/credential failure: report, do not raise
+        rows.append(("discovery", f"unavailable ({e})"))
+        return _kv(f"Source {name}", rows)
+    try:
+        if isinstance(src, SupportsCapabilities):
+            caps = src.capabilities()
+            rows.append(("frequency", caps.frequency))
+            if caps.period_range:
+                rows.append(("period_range", f"{caps.period_range[0]}..{caps.period_range[1]}"))
+            if caps.provenance:
+                rows.append(("provenance", caps.provenance))
+        if isinstance(src, SupportsDiscovery):
+            all_fields = set(SCHEMA)
+            avail = src.available_fields()
+            rows.append(("provides", f"{len(avail & all_fields)}/{len(all_fields)} schema fields"))
+            missing = sorted(all_fields - avail)
+            if missing:
+                rows.append(("unavailable_fields", ", ".join(missing)))
+        else:
+            rows.append(("discovery", "not supported (core-tier source)"))
+    finally:
+        try:
+            src.close()
+        except Exception:
+            pass
+    return _kv(f"Source {name}", rows)
+
+
 def describe(target: tuple[str, ...], config: Config = DEFAULT_CONFIG) -> CatalogResult:
     dotted = ".".join(target)
     # category list-alls
@@ -176,8 +216,7 @@ def describe(target: tuple[str, ...], config: Config = DEFAULT_CONFIG) -> Catalo
         ])
     # a source
     if len(target) == 1 and target[0] in config.sources:
-        spec = config.sources[target[0]]
-        return _kv(f"Source {target[0]}", [("driver", spec.driver), ("options", str(spec.options))])
+        return _source_detail(target[0], config.sources[target[0]])
     return CatalogResult(
         f"Unknown catalog target: '{dotted}'",
         pl.DataFrame({"hint": ["try ? , ?fields, ?functions, ?sources, or ?<namespace>"]}),

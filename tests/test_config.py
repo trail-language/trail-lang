@@ -59,3 +59,26 @@ def test_cli_run_with_config(tmp_path):
     model.write_text("model m { export margin = income.operating_income / income.revenue }\n")
     res = CliRunner().invoke(main, ["run", str(model), "--model", "m", "--config", str(cfg)])
     assert res.exit_code == 0 and "margin" in res.output
+
+
+YAML_STRICT = """
+sources:
+  fixture:
+    driver: fixture
+precedence:
+  default: [fixture]
+panel:
+  strict: true
+"""
+
+
+def test_panel_strict_parsed(tmp_path):
+    f = tmp_path / "trail.yaml"
+    f.write_text(YAML_STRICT)
+    assert load_config(str(f)).strict is True
+
+
+def test_strict_defaults_false(tmp_path):
+    f = tmp_path / "trail.yaml"
+    f.write_text(YAML_OK)
+    assert load_config(str(f)).strict is False

@@ -3,7 +3,7 @@
 A `def` is inlined at each call site by substituting argument expressions into its body,
 then compiling the result normally. This preserves totality (no recursion), vectorized
 execution (the body composes ops that already lower to Polars), and static analyzability
-(the expanded AST contains only builtins + fields). Primitives cannot be defined this way —
+(the expanded AST contains only builtins + fields). Primitives cannot be defined this way -
 they stay in the operator library; a `def` may only compose existing functions.
 """
 from __future__ import annotations

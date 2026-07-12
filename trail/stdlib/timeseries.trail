@@ -1,4 +1,4 @@
-# Trail stdlib: timeseries — DERIVED operators migrated out of the engine.
+# Trail stdlib: timeseries - DERIVED operators migrated out of the engine.
 # These were hand-written Polars primitives; they are pure compositions, so they belong here.
 # The engine (ops.py) now carries only irreducible primitives.
 

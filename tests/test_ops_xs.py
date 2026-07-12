@@ -30,7 +30,7 @@ def test_zscore_by_sector():
 
 def test_rank():
     assert _col(build("rank", [pl.col("v")], {}, None)) == [1.0, 2.0, 3.0, 4.0]
-    # pctile is now a derived macro (stdlib) — see tests/test_timeseries.py
+    # pctile is now a derived macro (stdlib) - see tests/test_timeseries.py
 
 
 def test_xs_frac_broadcasts():

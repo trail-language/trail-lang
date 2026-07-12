@@ -1,6 +1,6 @@
-# Trail stdlib: math — elementary, exponential/log, hyperbolic, constants.
+# Trail stdlib: math - elementary, exponential/log, hyperbolic, constants.
 # All DERIVED from the primitive set {+ - * / ^, sqrt, abs, log, exp} + ternary.
-# (True trigonometry — sin/cos/tan — are primitives; they cannot be composed from these.)
+# (True trigonometry - sin/cos/tan - are primitives; they cannot be composed from these.)
 
 # --- constants (zero-arg macros) ---
 def pi()    = 3.141592653589793

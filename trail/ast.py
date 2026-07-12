@@ -157,12 +157,12 @@ class Program:
 
 @dataclass(frozen=True)
 class MetaCatalog:
-    """`?` — the full catalog summary."""
+    """`?` - the full catalog summary."""
 
 
 @dataclass(frozen=True)
 class MetaDescribe:
-    """`?<target>` — describe a namespace, field, function, or source
+    """`?<target>` - describe a namespace, field, function, or source
     (targets `functions` / `sources` list those categories)."""
 
     target: tuple[str, ...]

@@ -1,4 +1,4 @@
-"""Standard library loader — concatenates the bundled `stdlib/*.trail` macro files.
+"""Standard library loader - concatenates the bundled `stdlib/*.trail` macro files.
 
 The stdlib is Trail source (derived functions), brought in as `def`s that are inlined
 at compile time. Order is irrelevant (functions are collected before expansion), but a

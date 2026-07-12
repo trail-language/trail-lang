@@ -78,7 +78,7 @@ def test_substitution_is_hygienic_for_fields():
 
 
 def test_stdlib_core_functions():
-    # stdlib is implicit via _compile/prepare — call core functions directly.
+    # stdlib is implicit via _compile/prepare - call core functions directly.
     res = _compile(
         "model m {\n"
         "  export gm = gross_margin(income.gross_profit, income.revenue)\n"

@@ -1,4 +1,4 @@
-# Trail stdlib: geometry — distances over paired series.
+# Trail stdlib: geometry - distances over paired series.
 # (Angle/rotation geometry needs the trig primitives sin/cos/atan.)
 
 def dist2(x1, y1, x2, y2)     = sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))

@@ -1,4 +1,4 @@
-# Trail stdlib: calculus — finite differences and cumulative operators over the period axis.
+# Trail stdlib: calculus - finite differences and cumulative operators over the period axis.
 # All backward/causal (PIT-safe): no future periods are referenced.
 
 def diff(x)          = x - lag(x, 1)                       # first backward difference (discrete derivative)

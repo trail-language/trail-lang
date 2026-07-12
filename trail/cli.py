@@ -17,7 +17,7 @@ from trail.validate import validate
 
 @click.group()
 def main() -> None:
-    """Trail — financial expression language."""
+    """Trail - financial expression language."""
 
 
 def _load_and_validate(path: str, with_stdlib: bool = True) -> ast.Program:

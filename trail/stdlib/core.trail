@@ -1,4 +1,4 @@
-# Trail standard library (prototype) — DERIVED operators written in Trail itself.
+# Trail standard library (prototype) - DERIVED operators written in Trail itself.
 # These are pure compositions of primitives; none needs hand-written Polars.
 # The primitive layer (lag, roll_*, xs_*, scalar math) stays in the operator library.
 

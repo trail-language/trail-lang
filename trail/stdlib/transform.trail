@@ -1,4 +1,4 @@
-# Trail stdlib: transforms — feature encodings and clipping.
+# Trail stdlib: transforms - feature encodings and clipping.
 
 def signed_log(x)       = sign(x) * log1p(abs(x))
 def signed_power(x, a)  = sign(x) * abs(x) ^ a

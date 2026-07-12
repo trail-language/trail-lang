@@ -1,4 +1,4 @@
-# Trail stdlib: factor — cross-sectional factor-construction toolkit.
+# Trail stdlib: factor - cross-sectional factor-construction toolkit.
 # DERIVED from the xs_* reducer primitives; the workhorses of empirical factor research.
 
 # --- population cross-sectional moments (consistent conventions for correlation) ---

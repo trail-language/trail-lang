@@ -1,4 +1,4 @@
-# Trail stdlib: statistics — cross-sectional and rolling transforms.
+# Trail stdlib: statistics - cross-sectional and rolling transforms.
 # DERIVED from the reducer primitives (xs_*, roll_*) + math.
 
 # --- cross-sectional (within period[, group]) ---

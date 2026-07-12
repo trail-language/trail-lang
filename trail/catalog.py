@@ -1,7 +1,7 @@
 """Discovery core: catalog / describe over the schema, function, and source registries.
 
 Shared engine behind every discovery front-end (REPL `?` meta-commands, the `trail
-catalog` CLI, and — later — MCP tools and Jupyter magics). Returns CatalogResult (a
+catalog` CLI, and - later - MCP tools and Jupyter magics). Returns CatalogResult (a
 titled metadata table), never a panel: discovery is metadata, not computation.
 """
 from __future__ import annotations
@@ -190,7 +190,7 @@ def catalog(config: Config = DEFAULT_CONFIG) -> CatalogResult:
         "namespace": ns,
         "fields": [len(fields(n).frame) for n in ns],
     })
-    title = (f"Trail catalog — {len(SCHEMA)} fields across {len(ns)} namespaces, "
+    title = (f"Trail catalog - {len(SCHEMA)} fields across {len(ns)} namespaces, "
              f"{len(KNOWN_FUNCTIONS)} primitive + {len(_stdlib_functions())} derived functions, "
              f"{len(config.sources)} source(s). Use ?<namespace>, ?functions, ?sources, ?<name> for detail.")
     return CatalogResult(title, frame)

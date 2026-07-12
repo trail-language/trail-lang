@@ -1,0 +1,13 @@
+# Trail standard library (prototype) — DERIVED operators written in Trail itself.
+# These are pure compositions of primitives; none needs hand-written Polars.
+# The primitive layer (lag, roll_*, xs_*, scalar math) stays in the operator library.
+
+# --- margins & ratios ---
+def gross_margin(gross_profit, revenue)          = gross_profit / revenue
+def net_margin(net_income, revenue)              = net_income / revenue
+def operating_margin(operating_income, revenue)  = operating_income / revenue
+def current_ratio(current_assets, current_liabilities) = current_assets / current_liabilities
+
+# --- returns & risk (compose the rolling primitives) ---
+def excess_return(r, benchmark) = r - benchmark
+def sharpe(r, n)                = roll_mean(r, n) / roll_std(r, n)

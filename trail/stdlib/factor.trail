@@ -1,0 +1,13 @@
+# Trail stdlib: factor — cross-sectional factor-construction toolkit.
+# DERIVED from the xs_* reducer primitives; the workhorses of empirical factor research.
+
+# --- population cross-sectional moments (consistent conventions for correlation) ---
+def xs_pvar(x)      = xs_mean(x * x) - xs_mean(x) * xs_mean(x)
+def xs_cov(a, b)    = xs_mean(a * b) - xs_mean(a) * xs_mean(b)
+def xs_corr(a, b)   = xs_cov(a, b) / sqrt(xs_pvar(a) * xs_pvar(b))
+
+# --- factor operations ---
+def ntile(x, k)     = min(floor((rank(x) - 1) * k / xs_count(x)) + 1, k)   # quantile bucket 1..k
+def scale(x)        = x / xs_sum(abs(x))                                     # L1-normalize (sum|.|=1)
+def neutralize(x, f) = demean(x) - (xs_cov(x, f) / xs_pvar(f)) * demean(f)   # single-factor residual
+def ic(signal, fwd) = xs_corr(signal, fwd)                                   # information coefficient

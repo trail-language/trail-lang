@@ -1,0 +1,10 @@
+# Trail stdlib: transforms — feature encodings and clipping.
+
+def signed_log(x)       = sign(x) * log1p(abs(x))
+def signed_power(x, a)  = sign(x) * abs(x) ^ a
+def clip_lower(x, lo)   = max(x, lo)
+def clip_upper(x, hi)   = min(x, hi)
+def to_bps(x)           = x * 10000
+def to_pct(x)           = x * 100
+def indicator(c)        = 1 if c else 0
+def between(x, lo, hi)  = x >= lo and x <= hi

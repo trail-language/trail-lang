@@ -1,0 +1,20 @@
+# Trail stdlib: timeseries — DERIVED operators migrated out of the engine.
+# These were hand-written Polars primitives; they are pure compositions, so they belong here.
+# The engine (ops.py) now carries only irreducible primitives.
+
+def yoy(x)   = x / lag(x, 1) - 1
+def avg2(x)  = (x + lag(x, 1)) / 2
+
+def drawdown(x) = x / cummax(x) - 1
+def pctile(x)   = (rank(x) - 1) / (xs_count(x) - 1)
+
+def roll_cov(x, y, n)  = roll_mean(x * y, n) - roll_mean(x, n) * roll_mean(y, n)
+def roll_corr(x, y, n) = roll_cov(x, y, n) / (roll_std(x, n) * roll_std(y, n))
+def beta(x, b, n)      = roll_cov(x, b, n) / roll_var(b, n)
+
+# CAGR / increase with the negative-value shift rule (reference §7.4): when start and end
+# straddle zero, flip the sign of the negative side and add twice its magnitude to the other.
+def _grow_start(s, e) = -s if (s < 0 and e > 0) else (s - 2 * e if (s > 0 and e < 0) else s)
+def _grow_end(s, e)   = e - 2 * s if (s < 0 and e > 0) else (-e if (s > 0 and e < 0) else e)
+def cagr(x, n)     = (_grow_end(lag(x, n), x) / _grow_start(lag(x, n), x)) ^ (1 / n) - 1
+def increase(x, n) = (_grow_end(lag(x, n), x) - _grow_start(lag(x, n), x)) / _grow_start(lag(x, n), x)

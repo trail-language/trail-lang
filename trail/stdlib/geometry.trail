@@ -1,0 +1,5 @@
+# Trail stdlib: geometry — distances over paired series.
+# (Angle/rotation geometry needs the trig primitives sin/cos/atan.)
+
+def dist2(x1, y1, x2, y2)     = sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
+def manhattan(x1, y1, x2, y2) = abs(x1 - x2) + abs(y1 - y2)

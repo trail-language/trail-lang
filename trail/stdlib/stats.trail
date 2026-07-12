@@ -1,0 +1,17 @@
+# Trail stdlib: statistics — cross-sectional and rolling transforms.
+# DERIVED from the reducer primitives (xs_*, roll_*) + math.
+
+# --- cross-sectional (within period[, group]) ---
+def demean(x)         = x - xs_mean(x)
+def xs_range(x)       = xs_max(x) - xs_min(x)
+def xs_cv(x)          = xs_std(x) / xs_mean(x)
+def minmax(x)         = (x - xs_min(x)) / (xs_max(x) - xs_min(x))
+def xs_mad(x)         = xs_median(abs(x - xs_median(x)))
+def robust_zscore(x)  = (x - xs_median(x)) / (1.4826 * xs_mad(x))
+
+# --- rolling (per security, trailing window) ---
+def roll_zscore(x, n) = (x - roll_mean(x, n)) / roll_std(x, n)
+def roll_range(x, n)  = roll_max(x, n) - roll_min(x, n)
+def roll_cv(x, n)     = roll_std(x, n) / roll_mean(x, n)
+def roll_geomean(x, n) = exp(roll_mean(log(x), n))
+def autocorr(x, k, n) = roll_corr(x, lag(x, k), n)

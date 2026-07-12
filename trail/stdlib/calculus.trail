@@ -1,0 +1,12 @@
+# Trail stdlib: calculus — finite differences and cumulative operators over the period axis.
+# All backward/causal (PIT-safe): no future periods are referenced.
+
+def diff(x)          = x - lag(x, 1)                       # first backward difference (discrete derivative)
+def diff2(x)         = x - 2 * lag(x, 1) + lag(x, 2)       # second difference
+def deriv(x, n)      = (x - lag(x, n)) / n                 # average rate of change over n periods
+def pct_change(x, n) = x / lag(x, n) - 1
+def log_return(x)    = log(x) - log(lag(x, 1))
+def momentum(x, n)   = x - lag(x, n)
+def cum_return(r)    = cumprod(1 + r) - 1                  # compounded cumulative return
+def integral(x)      = cumsum(x)                           # discrete integral (rectangular)
+def trapz(x)         = cumsum((x + lag(x, 1)) / 2)         # trapezoidal cumulative integral

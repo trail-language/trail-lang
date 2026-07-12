@@ -1,0 +1,41 @@
+# Trail stdlib: math — elementary, exponential/log, hyperbolic, constants.
+# All DERIVED from the primitive set {+ - * / ^, sqrt, abs, log, exp} + ternary.
+# (True trigonometry — sin/cos/tan — are primitives; they cannot be composed from these.)
+
+# --- constants (zero-arg macros) ---
+def pi()    = 3.141592653589793
+def tau()   = 6.283185307179586
+def euler() = 2.718281828459045
+
+# --- elementary ---
+def square(x)     = x * x
+def cube(x)       = x * x * x
+def reciprocal(x) = 1 / x
+def sign(x)       = 1 if x > 0 else -1 if x < 0 else 0
+def cbrt(x)       = sign(x) * abs(x) ^ (1 / 3)
+def hypot(a, b)   = sqrt(a * a + b * b)
+
+# --- logarithms & exponentials ---
+def log10(x) = log(x) / log(10)
+def log2(x)  = log(x) / log(2)
+def logb(x, b) = log(x) / log(b)
+def log1p(x) = log(1 + x)
+def expm1(x) = exp(x) - 1
+def pow10(x) = 10 ^ x
+
+# --- hyperbolic (derivable from exp; note: overflow for very large |x|) ---
+def sinh(x)  = (exp(x) - exp(-x)) / 2
+def cosh(x)  = (exp(x) + exp(-x)) / 2
+def tanh(x)  = (exp(2 * x) - 1) / (exp(2 * x) + 1)
+def asinh(x) = log(x + sqrt(x * x + 1))
+def acosh(x) = log(x + sqrt(x * x - 1))
+def atanh(x) = 0.5 * log((1 + x) / (1 - x))
+
+# --- squashing / activation transforms ---
+def sigmoid(x)  = 1 / (1 + exp(-x))
+def logit(p)    = log(p / (1 - p))
+def softplus(x) = log(1 + exp(x))
+
+# --- angle conversion ---
+def deg2rad(d) = d * pi() / 180
+def rad2deg(r) = r * 180 / pi()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 
 import click
+from lark.exceptions import UnexpectedInput
 
 from trail import ast, catalog as catalog_core
 from trail.compiler import compile_model
@@ -25,6 +26,11 @@ def _load_and_validate(path: str, with_stdlib: bool = True) -> ast.Program:
         src = fh.read()
     try:
         program = prepare(src, stdlib=with_stdlib)  # prepend stdlib, parse, inline defs
+    except UnexpectedInput as e:
+        tok = getattr(e, "token", None)
+        detail = f": unexpected {str(tok)!r}" if tok else ""
+        click.echo(f"ERROR SYNTAX at line {e.line}, column {e.column}{detail}")
+        sys.exit(1)
     except TrailFunctionError as e:
         click.echo(f"ERROR FUNC {e}")
         sys.exit(1)

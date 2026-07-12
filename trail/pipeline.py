@@ -13,5 +13,12 @@ from trail.parser import parse_program
 
 
 def prepare(source: str, *, stdlib: bool = True) -> ast.Program:
-    full = f"{stdlib_source()}\n{source}" if stdlib else source
-    return expand_program(parse_program(full))
+    # Parse the caller's source on its own so any syntax error carries line/column
+    # numbers relative to *their* file, not an internally prepended standard library.
+    user = parse_program(source)
+    if stdlib:
+        library = parse_program(stdlib_source())
+        program = ast.Program(library.decls + user.decls)
+    else:
+        program = user
+    return expand_program(program)

@@ -55,3 +55,13 @@ def test_omitted_on_with_multiple_universes():
 
 def test_fwd_return_only_in_learn():
     assert "E-FWD-CONTEXT" in codes("model m { a = fwd_return(12) }")
+
+
+def test_median_deferred_warns():
+    assert "W-MEDIAN-DEFERRED" in codes("model m { on_missing median\n a = income.revenue }")
+
+
+def test_nonannual_period_warns():
+    assert "W-PERIOD-DEFERRED" in codes("model m period monthly { a = income.revenue }")
+    assert "W-PERIOD-DEFERRED" in codes("signal s period quarterly = income.revenue")
+    assert "W-PERIOD-DEFERRED" not in codes("model m period annual { a = income.revenue }")

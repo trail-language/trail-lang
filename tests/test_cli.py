@@ -25,3 +25,27 @@ def test_run_prints_exports(tmp_path):
     f.write_text(GOOD)
     res = CliRunner().invoke(main, ["run", str(f), "--model", "m"])
     assert res.exit_code == 0 and "margin" in res.output
+
+
+def test_syntax_error_is_a_clean_message(tmp_path):
+    f = tmp_path / "bad.trail"
+    f.write_text("model m { a = income.revenue +++ }\n")
+    res = CliRunner().invoke(main, ["validate", str(f)])
+    assert res.exit_code == 1
+    assert "Traceback" not in res.output   # no raw Python traceback
+    assert "SYNTAX" in res.output
+
+
+def test_syntax_error_line_is_relative_to_user_file(tmp_path):
+    # error on line 3 of the user's file; stdlib is prepended internally but must not shift the number
+    f = tmp_path / "bad.trail"
+    f.write_text("model m {\n  a = income.revenue\n  b = = 2\n}\n")
+    res = CliRunner().invoke(main, ["validate", str(f)])
+    assert res.exit_code == 1 and "line 3" in res.output
+
+
+def test_typed_marker_is_present():
+    from pathlib import Path
+
+    import trail
+    assert (Path(trail.__file__).parent / "py.typed").exists()

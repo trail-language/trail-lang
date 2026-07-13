@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import warnings
 
 import click
 from lark.exceptions import UnexpectedInput
@@ -12,7 +13,7 @@ from trail.config import ConfigError, load_config
 from trail.deps import extract
 from trail.macro import TrailFunctionError
 from trail.pipeline import prepare
-from trail.sources import load_panel_for
+from trail.sources import PanelConformanceWarning, load_panel_for
 from trail.validate import validate
 
 
@@ -79,7 +80,12 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
     program = _load_and_validate(path, with_stdlib=not no_stdlib)
     try:
         config = load_config(config_path)
-        panel = load_panel_for(config, set(extract(program).fields))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", PanelConformanceWarning)
+            panel = load_panel_for(config, set(extract(program).fields))
+        for w in caught:
+            if issubclass(w.category, PanelConformanceWarning):
+                click.echo(f"WARN  {w.message}")
     except ConfigError as e:
         click.echo(f"ERROR CONFIG {e}")
         sys.exit(1)

@@ -34,6 +34,11 @@ Issues = "https://github.com/trail-language/trail-py/issues"
 [project.scripts]
 trail = "trail.cli:main"
 
+# Built-in data sources. Third-party providers register additional drivers under the
+# same group, so `pip install trail-<name>` makes `driver: <name>` usable in trail.yaml.
+[project.entry-points."trail.sources"]
+fixture = "trail.sources:FixtureSource"
+
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.8", "pandas>=2.2", "pyarrow>=17"]
 

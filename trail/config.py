@@ -23,6 +23,9 @@ class Config:
     sources: dict[str, SourceSpec]
     precedence: dict[str, list[str]]
     periods: tuple[int, int] | None = None
+    #: when True, a non-conforming source panel is a hard error (E-SOURCE-PANEL);
+    #: when False (default), deviations are warned and coerced (W-SOURCE-PANEL).
+    strict: bool = False
 
 
 DEFAULT_CONFIG = Config(
@@ -54,6 +57,8 @@ def load_config(path: str | None = None) -> Config:
                 raise ConfigError(
                     f"E-SOURCE-UNKNOWN precedence.{ns} references undeclared source '{s}'"
                 )
-    p = (raw.get("panel") or {}).get("periods")
+    panel = raw.get("panel") or {}
+    p = panel.get("periods")
     periods = (int(p[0]), int(p[1])) if p else None
-    return Config(sources, precedence, periods)
+    strict = bool(panel.get("strict", False))
+    return Config(sources, precedence, periods, strict)

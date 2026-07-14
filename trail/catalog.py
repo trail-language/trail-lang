@@ -13,7 +13,7 @@ import polars as pl
 
 from trail import ast
 from trail.config import DEFAULT_CONFIG, Config
-from trail.schema import SCHEMA
+from trail.schema import active_schema
 from trail.validate import KNOWN_FUNCTIONS
 
 
@@ -96,12 +96,12 @@ class CatalogResult:
 
 
 def namespaces() -> list[str]:
-    return sorted({c.split(".", 1)[0] for c in SCHEMA})
+    return sorted({c.split(".", 1)[0] for c in active_schema()})
 
 
 def fields(namespace: str | None = None) -> CatalogResult:
     items = [
-        (c, spec.kind) for c, spec in SCHEMA.items()
+        (c, spec.kind) for c, spec in active_schema().items()
         if namespace is None or c.split(".", 1)[0] == namespace
     ]
     frame = pl.DataFrame({"field": [c for c, _ in items], "kind": [k for _, k in items]}).sort("field")
@@ -169,10 +169,13 @@ def _source_detail(name: str, spec) -> CatalogResult:
             if caps.provenance:
                 rows.append(("provenance", caps.provenance))
         if isinstance(src, SupportsDiscovery):
-            all_fields = set(SCHEMA)
             avail = src.available_fields()
-            rows.append(("provides", f"{len(avail & all_fields)}/{len(all_fields)} schema fields"))
-            missing = sorted(all_fields - avail)
+            all_fields = active_schema()
+            ns = {f.split(".", 1)[0] for f in avail}
+            relevant = {c for c in all_fields if c.split(".", 1)[0] in ns}
+            rows.append(("provides",
+                         f"{len(avail & relevant)}/{len(relevant)} fields in [{', '.join(sorted(ns))}]"))
+            missing = sorted(relevant - avail)
             if missing:
                 rows.append(("unavailable_fields", ", ".join(missing)))
         else:
@@ -195,8 +198,9 @@ def describe(target: tuple[str, ...], config: Config = DEFAULT_CONFIG) -> Catalo
     if target == ("fields",):
         return fields()
     # a specific field (dotted path in the schema)
-    if dotted in SCHEMA:
-        return _kv(f"Field {dotted}", [("column", dotted), ("kind", SCHEMA[dotted].kind)])
+    _schema = active_schema()
+    if dotted in _schema:
+        return _kv(f"Field {dotted}", [("column", dotted), ("kind", _schema[dotted].kind)])
     # a namespace
     if len(target) == 1 and target[0] in namespaces():
         return fields(target[0])
@@ -229,7 +233,7 @@ def catalog(config: Config = DEFAULT_CONFIG) -> CatalogResult:
         "namespace": ns,
         "fields": [len(fields(n).frame) for n in ns],
     })
-    title = (f"Trail catalog - {len(SCHEMA)} fields across {len(ns)} namespaces, "
+    title = (f"Trail catalog - {len(active_schema())} fields across {len(ns)} namespaces, "
              f"{len(KNOWN_FUNCTIONS)} primitive + {len(_stdlib_functions())} derived functions, "
              f"{len(config.sources)} source(s). Use ?<namespace>, ?functions, ?sources, ?<name> for detail.")
     return CatalogResult(title, frame)

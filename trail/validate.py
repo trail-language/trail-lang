@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from trail import ast
-from trail.schema import SCHEMA, is_field
+from trail.schema import is_field, kind_of
 
 # name -> (min_args, max_args) counting positional args only; kwargs checked by name.
 KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
@@ -32,7 +32,7 @@ class Issue:
 
 
 def _kind(e) -> str | None:
-    return SCHEMA[e.column].kind if isinstance(e, ast.FieldRef) and is_field(e.column) else None
+    return kind_of(e.column) if isinstance(e, ast.FieldRef) else None
 
 
 def _lint_stock_flow(e: ast.BinOp, out: list[Issue]) -> None:

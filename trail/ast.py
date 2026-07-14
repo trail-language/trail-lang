@@ -117,7 +117,7 @@ class UniverseDecl:
 class ModelDecl:
     name: str
     universe: str | None
-    period: str
+    frequency: str
     desc: str | None
     on_missing: str
     statements: tuple["Assignment | ScoreDecl", ...]
@@ -127,7 +127,7 @@ class ModelDecl:
 class SignalDecl:
     name: str
     universe: str | None
-    period: str
+    frequency: str
     expr: "Expr"
 
 

@@ -10,7 +10,7 @@ import polars as pl
 
 from trail.schema import kind_of
 from trail.source import (
-    PERIOD_COL,
+    TIME_COL,
     ENTITY_COL,
     DataSource,
     SupportsCapabilities,
@@ -26,8 +26,8 @@ _FLOAT_DTYPES = {pl.Float32, pl.Float64}
 _NUMERIC_KINDS = {"flow", "stock", "ratio", "per_share", "price", "level", "rate", "index"}
 
 
-def _is_integer(dtype) -> bool:
-    return dtype in _INT_DTYPES
+def _is_temporal(dtype) -> bool:
+    return dtype == pl.Date or isinstance(dtype, pl.Datetime)
 
 
 def _is_numeric(dtype) -> bool:
@@ -61,21 +61,21 @@ def assert_source_conforms(
     panel = src.load(set(fields))
     assert isinstance(panel, pl.DataFrame), "load() must return a polars DataFrame"
     cols = set(panel.columns)
-    for required in (ENTITY_COL, PERIOD_COL):
+    for required in (ENTITY_COL, TIME_COL):
         assert required in cols, f"panel missing required column '{required}'"
     missing = set(fields) - cols
     assert not missing, f"panel missing requested field column(s): {sorted(missing)}"
 
     schema = panel.schema
     assert schema[ENTITY_COL] == pl.Utf8, f"'entity' must be Utf8, got {schema[ENTITY_COL]}"
-    assert _is_integer(schema[PERIOD_COL]), f"'period' must be integer, got {schema[PERIOD_COL]}"
+    assert _is_temporal(schema[TIME_COL]), f"'time' must be temporal (Date/Datetime), got {schema[TIME_COL]}"
     for f in fields:
         if kind_of(f) in _NUMERIC_KINDS:
             assert _is_numeric(schema[f]), f"numeric field '{f}' has non-numeric dtype {schema[f]}"
 
     if panel.height:
-        n_unique = panel.select([ENTITY_COL, PERIOD_COL]).unique().height
-        assert n_unique == panel.height, "rows are not unique on (entity, period)"
+        n_unique = panel.select([ENTITY_COL, TIME_COL]).unique().height
+        assert n_unique == panel.height, "rows are not unique on (entity, time)"
     elif expect_rows:
         raise AssertionError("panel has no rows (expected data)")
 
@@ -84,8 +84,8 @@ def assert_source_conforms(
         assert caps.frequency in {"annual", "quarterly", "mixed"}, f"bad frequency {caps.frequency!r}"
 
     if isinstance(src, SupportsUniverse):
-        secs = src.securities()
-        assert isinstance(secs, list), "securities() must return a list"
+        secs = src.entities()
+        assert isinstance(secs, list), "entities() must return a list"
 
     src.close()
     src.close()  # idempotent

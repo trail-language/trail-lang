@@ -90,9 +90,9 @@ def _phase_warnings(decl, out: list[Issue]) -> None:
     if getattr(decl, "on_missing", None) == "median":
         out.append(Issue("warning", "W-MEDIAN-DEFERRED",
                          "on_missing median is treated as skip until phase 2"))
-    if decl.period != "annual":
+    if decl.frequency != "annual":
         out.append(Issue("warning", "W-PERIOD-DEFERRED",
-                         f"period '{decl.period}' runs with annual-frequency semantics until phase 2"))
+                         f"frequency '{decl.frequency}' runs single-frequency until phase 3 alignment"))
 
 
 def validate(program: ast.Program) -> list[Issue]:

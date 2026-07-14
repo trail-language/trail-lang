@@ -130,12 +130,12 @@ class _T(Transformer):
         name = s[0].value
         idx = 1
         universe = None
-        period = "annual"
+        frequency = "annual"
         if idx < len(s) and isinstance(s[idx], Token) and s[idx].type == "NAME":
             universe = s[idx].value
             idx += 1
-        if idx < len(s) and isinstance(s[idx], Token) and s[idx].type == "PERIOD":
-            period = s[idx].value
+        if idx < len(s) and isinstance(s[idx], Token) and s[idx].type == "FREQ":
+            frequency = s[idx].value
             idx += 1
         desc, on_missing, stmts = None, "skip", []
         for item in s[idx:]:
@@ -145,20 +145,20 @@ class _T(Transformer):
                 on_missing = item[1]
             else:
                 stmts.append(item)
-        return ast.ModelDecl(name, universe, period, desc, on_missing, tuple(stmts))
+        return ast.ModelDecl(name, universe, frequency, desc, on_missing, tuple(stmts))
 
     def signal_decl(self, s):
         name = s[0].value
         idx = 1
         universe = None
-        period = "annual"
+        frequency = "annual"
         if idx < len(s) - 1 and isinstance(s[idx], Token) and s[idx].type == "NAME":
             universe = s[idx].value
             idx += 1
-        if idx < len(s) - 1 and isinstance(s[idx], Token) and s[idx].type == "PERIOD":
-            period = s[idx].value
+        if idx < len(s) - 1 and isinstance(s[idx], Token) and s[idx].type == "FREQ":
+            frequency = s[idx].value
             idx += 1
-        return ast.SignalDecl(name, universe, period, s[-1])
+        return ast.SignalDecl(name, universe, frequency, s[-1])
 
     def func_def(self, s):
         # s = [NAME(name), NAME(param)*, body_expr]; params are the NAME tokens

@@ -17,7 +17,7 @@ def test_ntile_buckets_are_balanced_and_ordered():
     df = _run("export b = ntile(income.revenue, 3)")
     assert set(df["b"].to_list()) <= {1.0, 2.0, 3.0}
     y = df.filter(pl.col("period") == 2024)
-    by_sec = {r["security"]: r["b"] for r in y.iter_rows(named=True)}
+    by_sec = {r["entity"]: r["b"] for r in y.iter_rows(named=True)}
     # 6 securities, k=3 -> 2 per bucket; lowest revenue in bucket 1, highest in 3
     assert by_sec["FFF"] == 3.0  # FFF has the largest revenue
     assert min(by_sec.values()) == 1.0 and max(by_sec.values()) == 3.0

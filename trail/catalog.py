@@ -30,7 +30,7 @@ def _stdlib_functions() -> dict[str, int]:
 
 # function -> (axis, one-line summary). Axis mirrors reference §7.
 _FUNC_META: dict[str, tuple[str, str]] = {
-    "lag": ("time-series", "value n periods earlier (per security)"),
+    "lag": ("time-series", "value n periods earlier (per entity)"),
     "roll_mean": ("time-series", "rolling mean over n periods"),
     "roll_sum": ("time-series", "rolling sum over n periods"),
     "roll_std": ("time-series", "rolling sample std (ddof=1) over n periods"),

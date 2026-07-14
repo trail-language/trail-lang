@@ -15,16 +15,16 @@ def test_schema_has_core_fields_with_kinds():
 def test_panel_shape_and_sort():
     df = load_panel()
     assert df.height == 6 * 8
-    assert df["security"].dtype == pl.Utf8 and df["period"].dtype == pl.Int32
+    assert df["entity"].dtype == pl.Utf8 and df["period"].dtype == pl.Int32
     assert set(SCHEMA) <= set(df.columns)
-    assert df.sort(["security", "period"]).equals(df)
+    assert df.sort(["entity", "period"]).equals(df)
 
 
 def test_panel_known_values_and_nulls():
     df = load_panel()
-    aaa_2020 = df.filter((pl.col("security") == "AAA") & (pl.col("period") == 2020))
+    aaa_2020 = df.filter((pl.col("entity") == "AAA") & (pl.col("period") == 2020))
     # revenue = 100 * (1 + 0.10) ** (year - 2017) for AAA (base 100, growth 10%)
     assert abs(aaa_2020["income.revenue"][0] - 100 * 1.10**3) < 1e-9
     assert aaa_2020["cash.stock_issued"][0] is None
-    fff = df.filter(pl.col("security") == "FFF")
+    fff = df.filter(pl.col("entity") == "FFF")
     assert fff["income.interest_expense"].null_count() == 8

@@ -17,7 +17,7 @@ def _compile(src: str, model: str = "m"):
 
 
 def _first(df, col):
-    return df.sort(["security", "period"])[col][0]  # AAA, 2017
+    return df.sort(["entity", "period"])[col][0]  # AAA, 2017
 
 
 def test_parse_func_def():

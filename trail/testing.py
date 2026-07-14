@@ -11,7 +11,7 @@ import polars as pl
 from trail.schema import kind_of
 from trail.source import (
     PERIOD_COL,
-    SECURITY_COL,
+    ENTITY_COL,
     DataSource,
     SupportsCapabilities,
     SupportsDiscovery,
@@ -61,21 +61,21 @@ def assert_source_conforms(
     panel = src.load(set(fields))
     assert isinstance(panel, pl.DataFrame), "load() must return a polars DataFrame"
     cols = set(panel.columns)
-    for required in (SECURITY_COL, PERIOD_COL):
+    for required in (ENTITY_COL, PERIOD_COL):
         assert required in cols, f"panel missing required column '{required}'"
     missing = set(fields) - cols
     assert not missing, f"panel missing requested field column(s): {sorted(missing)}"
 
     schema = panel.schema
-    assert schema[SECURITY_COL] == pl.Utf8, f"'security' must be Utf8, got {schema[SECURITY_COL]}"
+    assert schema[ENTITY_COL] == pl.Utf8, f"'entity' must be Utf8, got {schema[ENTITY_COL]}"
     assert _is_integer(schema[PERIOD_COL]), f"'period' must be integer, got {schema[PERIOD_COL]}"
     for f in fields:
         if kind_of(f) in _NUMERIC_KINDS:
             assert _is_numeric(schema[f]), f"numeric field '{f}' has non-numeric dtype {schema[f]}"
 
     if panel.height:
-        n_unique = panel.select([SECURITY_COL, PERIOD_COL]).unique().height
-        assert n_unique == panel.height, "rows are not unique on (security, period)"
+        n_unique = panel.select([ENTITY_COL, PERIOD_COL]).unique().height
+        assert n_unique == panel.height, "rows are not unique on (entity, period)"
     elif expect_rows:
         raise AssertionError("panel has no rows (expected data)")
 

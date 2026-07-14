@@ -18,7 +18,7 @@ EXAMPLE = Path(__file__).parent.parent / "examples" / "piotroski.trail"
 
 def _oracle(pdf):
     out = {}
-    for sec, g in pdf.groupby("security"):
+    for sec, g in pdf.groupby("entity"):
         g = g.sort_values("period").reset_index(drop=True)
         assets = g["balance.total_assets"]
         avg_assets = (assets + assets.shift(1)) / 2
@@ -61,7 +61,7 @@ def test_fscore_matches_pandas_oracle():
     expected = _oracle(load_panel().to_pandas())
     checked = 0
     for row in result.iter_rows(named=True):
-        key = (row["security"], row["period"])
+        key = (row["entity"], row["period"])
         assert row["fscore"] == expected[key], (key, row["fscore"], expected[key])
         checked += 1
     assert checked == 48

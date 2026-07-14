@@ -1,13 +1,13 @@
 import polars as pl
 import pytest
 
-from trail.ops import PERIOD, SEC, build
+from trail.ops import PERIOD, ENTITY, build
 
 _DF = pl.DataFrame({
-    SEC: ["A"] * 5 + ["B"] * 5,
+    ENTITY: ["A"] * 5 + ["B"] * 5,
     PERIOD: [1, 2, 3, 4, 5] * 2,
     "v": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0],
-}).sort([SEC, PERIOD])
+}).sort([ENTITY, PERIOD])
 
 
 def _col(expr):
@@ -22,7 +22,7 @@ def test_decay_linear_full_windows_and_weighting():
     assert out[5] is None  # B's first period must not borrow A's tail
 
 
-def test_ewm_mean_is_causal_per_security():
+def test_ewm_mean_is_causal_per_entity():
     out = _col(build("ewm_mean", [pl.col("v"), 3], {}, None))
     assert out[0] == pytest.approx(1.0)   # first value = itself
     assert out[5] == pytest.approx(10.0)  # B starts fresh

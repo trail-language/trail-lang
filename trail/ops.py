@@ -1,12 +1,12 @@
 """Operator library: every Trail function lowered to a vectorized Polars expression.
 
-The panel is always sorted [SEC, PERIOD]; per-security ops close over that ordering.
+The panel is always sorted [ENTITY, PERIOD]; per-entity ops close over that ordering.
 """
 from __future__ import annotations
 
 import polars as pl
 
-SEC = "security"
+ENTITY = "entity"
 PERIOD = "period"
 
 
@@ -27,40 +27,40 @@ def _group(by: tuple[str, ...] | None) -> list[str]:
 def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl.Expr:
     a = args
     match name:
-        # --- time-series (per security) ---
+        # --- time-series (per entity) ---
         case "lag":
-            return a[0].shift(int(a[1])).over(SEC)
+            return a[0].shift(int(a[1])).over(ENTITY)
         case "roll_mean" | "roll_sum" | "roll_std" | "roll_var" | "roll_max" | "roll_min":
             n = int(a[1])
             method = {
                 "roll_mean": "rolling_mean", "roll_sum": "rolling_sum", "roll_std": "rolling_std",
                 "roll_var": "rolling_var", "roll_max": "rolling_max", "roll_min": "rolling_min",
             }[name]
-            return getattr(a[0], method)(window_size=n, min_samples=n).over(SEC)
+            return getattr(a[0], method)(window_size=n, min_samples=n).over(ENTITY)
         case "roll_quantile":
             n = int(a[1])
-            return a[0].rolling_quantile(quantile=float(a[2]), window_size=n, min_samples=n).over(SEC)
+            return a[0].rolling_quantile(quantile=float(a[2]), window_size=n, min_samples=n).over(ENTITY)
         case "cummax":
-            return a[0].cum_max().over(SEC)
+            return a[0].cum_max().over(ENTITY)
         case "cumsum":
-            return a[0].cum_sum().over(SEC)
+            return a[0].cum_sum().over(ENTITY)
         case "cumprod":
-            return a[0].cum_prod().over(SEC)
+            return a[0].cum_prod().over(ENTITY)
         case "cummin":
-            return a[0].cum_min().over(SEC)
+            return a[0].cum_min().over(ENTITY)
         case "roll_median":
             n = int(a[1])
-            return a[0].rolling_median(window_size=n, min_samples=n).over(SEC)
+            return a[0].rolling_median(window_size=n, min_samples=n).over(ENTITY)
         case "roll_skew":
-            return a[0].rolling_skew(window_size=int(a[1])).over(SEC)
+            return a[0].rolling_skew(window_size=int(a[1])).over(ENTITY)
         case "ewm_mean":
-            return a[0].ewm_mean(span=float(a[1])).over(SEC)
+            return a[0].ewm_mean(span=float(a[1])).over(ENTITY)
         case "ewm_std":
-            return a[0].ewm_std(span=float(a[1])).over(SEC)
+            return a[0].ewm_std(span=float(a[1])).over(ENTITY)
         case "decay_linear":
             n = int(a[1])
             weights = [float(i) for i in range(1, n + 1)]  # most recent period weighted highest
-            return a[0].rolling_mean(window_size=n, weights=weights, min_samples=n).over(SEC)
+            return a[0].rolling_mean(window_size=n, weights=weights, min_samples=n).over(ENTITY)
         # --- cross-sectional (per period[, group]) ---
         case "zscore":
             g = _group(by)

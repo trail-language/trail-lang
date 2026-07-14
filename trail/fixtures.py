@@ -17,7 +17,7 @@ def load_panel() -> pl.DataFrame:
         for t, year in enumerate(YEARS):
             rev = _BASE[sec] * (1 + _GROWTH[sec]) ** t
             row = {
-                "security": sec,
+                "entity": sec,
                 "period": year,
                 "income.revenue": rev,
                 "income.cogs": rev * 0.55,
@@ -52,4 +52,4 @@ def load_panel() -> pl.DataFrame:
             }
             rows.append(row)
     df = pl.DataFrame(rows).with_columns(pl.col("period").cast(pl.Int32))
-    return df.sort(["security", "period"])
+    return df.sort(["entity", "period"])

@@ -44,7 +44,7 @@ model m {
     # fixture: margin = 0.20 everywhere -> s1 = 2; net_income > 0 -> s2 = 1
     # composite = (2*3 + 1*1) / (2*3 + 1*1) = 1.0
     assert result["composite"].to_list() == pytest.approx([1.0] * 48)
-    assert set(result.columns) == {"entity", "period", "composite"}
+    assert set(result.columns) == {"entity", "time", "composite"}
 
 
 def test_on_missing_skip_renormalizes():
@@ -79,6 +79,6 @@ model m on tech { export z = zscore(income.revenue) }
 ''')
     universes = {d.name: d for d in prog.decls[:1]}
     result = compile_model(prog.decls[1], universes).run(load_panel())
-    per_period_mean = result.group_by("period").agg(pl.col("z").mean())
+    per_period_mean = result.group_by("time").agg(pl.col("z").mean())
     for v in per_period_mean["z"].to_list():
         assert v == pytest.approx(0.0, abs=1e-9)  # z-scored within tech only

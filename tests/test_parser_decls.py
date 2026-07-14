@@ -4,7 +4,7 @@ from trail.parser import parse_program
 SRC = '''
 universe us_main = stocks where meta.exchange in ("NYSE", "NASDAQ") and meta.market_cap > 200e6
 
-model quality on us_main period annual {
+model quality on us_main at annual {
     desc "margin quality"
     on_missing skip
     operating_margin = income.operating_income / income.revenue
@@ -16,7 +16,7 @@ model quality on us_main period annual {
     export composite = weighted_score()
 }
 
-signal breadth on us_main period monthly = xs_frac(price.adj_close > roll_mean(price.adj_close, 10))
+signal breadth on us_main at monthly = xs_frac(price.adj_close > roll_mean(price.adj_close, 10))
 '''
 
 
@@ -34,7 +34,7 @@ def test_universe():
 
 def test_model_statements_and_defaults():
     m = parse_program(SRC).decls[1]
-    assert m.universe == "us_main" and m.period == "annual"
+    assert m.universe == "us_main" and m.frequency == "annual"
     assert m.desc == "margin quality" and m.on_missing == "skip"
     assign, score, export = m.statements
     assert isinstance(assign, ast.Assignment) and not assign.export
@@ -45,12 +45,12 @@ def test_model_statements_and_defaults():
 
 def test_model_defaults_when_clauses_absent():
     m = parse_program("model x { a = 1 }").decls[0]
-    assert m.universe is None and m.period == "annual" and m.on_missing == "skip"
+    assert m.universe is None and m.frequency == "annual" and m.on_missing == "skip"
 
 
 def test_signal_shape():
     sig = parse_program(SRC).decls[2]
-    assert sig.name == "breadth" and sig.universe == "us_main" and sig.period == "monthly"
+    assert sig.name == "breadth" and sig.universe == "us_main" and sig.frequency == "monthly"
     assert isinstance(sig.expr, ast.Call) and sig.expr.name == "xs_frac"
 
 

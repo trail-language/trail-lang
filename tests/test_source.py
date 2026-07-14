@@ -1,3 +1,5 @@
+import datetime as dt
+
 import polars as pl
 import pytest
 
@@ -41,10 +43,10 @@ class _FullSource(ExtendedDataSource):
         return pl.DataFrame(
             {
                 "entity": ["A", "A", "B"],
-                "period": [2020, 2021, 2020],
+                "time": [dt.datetime(2020, 12, 31), dt.datetime(2021, 12, 31), dt.datetime(2020, 12, 31)],
                 "income.revenue": [1.0, 2.0, 3.0],
             }
-        ).with_columns(pl.col("period").cast(pl.Int32))
+        ).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
     def available_fields(self):
         return {"income.revenue"}
@@ -52,7 +54,7 @@ class _FullSource(ExtendedDataSource):
     def describe_field(self, field):
         return FieldInfo(field, True, "direct") if field == "income.revenue" else None
 
-    def securities(self, universe=None):
+    def entities(self, universe=None):
         return ["A", "B"]
 
     def capabilities(self):

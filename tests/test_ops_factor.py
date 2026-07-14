@@ -1,13 +1,13 @@
 import polars as pl
 import pytest
 
-from trail.ops import PERIOD, ENTITY, build
+from trail.ops import TIME, ENTITY, build
 
 _DF = pl.DataFrame({
     ENTITY: ["A"] * 5 + ["B"] * 5,
-    PERIOD: [1, 2, 3, 4, 5] * 2,
+    TIME: [1, 2, 3, 4, 5] * 2,
     "v": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0],
-}).sort([ENTITY, PERIOD])
+}).sort([ENTITY, TIME])
 
 
 def _col(expr):

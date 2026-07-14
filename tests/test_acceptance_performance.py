@@ -25,20 +25,20 @@ def test_composite_bounds_and_null_policy():
     vals = [v for v in result["composite"].to_list() if v is not None]
     assert vals and all(0.0 <= v <= 1.0 for v in vals)
     # FFF has null interest_expense -> that score skipped, composite still non-null
-    fff_2024 = result.filter((pl.col("entity") == "FFF") & (pl.col("period") == 2024))
+    fff_2024 = result.filter((pl.col("entity") == "FFF") & (pl.col("time").dt.year() == 2024))
     assert fff_2024["composite"][0] is not None
 
 
 def test_revenue_cagr_known_value():
     # AAA grows 10%/yr exactly -> 4y CAGR = 0.10
     result = _run()
-    aaa_2024 = result.filter((pl.col("entity") == "AAA") & (pl.col("period") == 2024))
+    aaa_2024 = result.filter((pl.col("entity") == "AAA") & (pl.col("time").dt.year() == 2024))
     assert aaa_2024["revenue_growth"][0] == pytest.approx(0.10)
 
 
 def test_growth_ordering_matches_fixture_design():
     # EEE shrinks (-3%/yr) so its growth is negative; AAA (10%) positive.
     result = _run()
-    last = result.filter(pl.col("period") == 2024)
+    last = result.filter(pl.col("time").dt.year() == 2024)
     by_sec = {r["entity"]: r["revenue_growth"] for r in last.iter_rows(named=True)}
     assert by_sec["EEE"] < 0 < by_sec["AAA"]

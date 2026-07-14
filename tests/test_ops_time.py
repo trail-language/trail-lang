@@ -1,14 +1,14 @@
 import polars as pl
 import pytest
 
-from trail.ops import PERIOD, ENTITY, build
+from trail.ops import TIME, ENTITY, build
 
-# 2 securities x 4 periods; X has a negative->positive transition to exercise the shift rule
+# 2 entities x 4 periods; X has a negative->positive transition to exercise the shift rule
 _DF = pl.DataFrame({
     ENTITY: ["X"] * 4 + ["Y"] * 4,
-    PERIOD: [1, 2, 3, 4] * 2,
+    TIME: [1, 2, 3, 4] * 2,
     "v": [-10.0, 20.0, 30.0, 60.0, 100.0, 110.0, 121.0, 133.1],
-}).sort([ENTITY, PERIOD])
+}).sort([ENTITY, TIME])
 
 
 def _col(expr):
@@ -28,7 +28,7 @@ def test_roll_mean_full_windows_only():
 
 
 def test_cummax_primitive():
-    df = pl.DataFrame({ENTITY: ["X"] * 3, PERIOD: [1, 2, 3], "v": [10.0, 8.0, 12.0]})
+    df = pl.DataFrame({ENTITY: ["X"] * 3, TIME: [1, 2, 3], "v": [10.0, 8.0, 12.0]})
     out = df.with_columns(build("cummax", [pl.col("v")], {}, None).alias("out"))["out"].to_list()
     assert out == pytest.approx([10.0, 10.0, 12.0])
 

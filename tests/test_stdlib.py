@@ -64,7 +64,7 @@ def _run(exports: str):
 
 
 def _cell(df, col, sec, period):
-    return df.filter((pl.col("entity") == sec) & (pl.col("period") == period))[col][0]
+    return df.filter((pl.col("entity") == sec) & (pl.col("time").dt.year() == period))[col][0]
 
 
 def test_math_and_transform_values():
@@ -103,9 +103,9 @@ def test_cross_sectional_transforms():
         "export rz = robust_zscore(income.revenue)\n"
     )
     # demean: each period's cross-sectional mean of the residual is ~0
-    per_period = df.group_by("period").agg(pl.col("dm").mean())
+    per_period = df.group_by("time").agg(pl.col("dm").mean())
     for v in per_period["dm"].to_list():
         assert v == pytest.approx(0.0, abs=1e-9)
     # robust_zscore of the cross-sectional median entity is ~0
-    med = df.filter(pl.col("period") == 2024)["rz"]
+    med = df.filter(pl.col("time").dt.year() == 2024)["rz"]
     assert med.median() == pytest.approx(0.0, abs=1e-9)

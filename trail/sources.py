@@ -15,7 +15,7 @@ import polars as pl
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
-from trail.source import PERIOD_COL, SECURITY_COL, DataSource
+from trail.source import PERIOD_COL, ENTITY_COL, DataSource
 
 __all__ = [
     "FixtureSource",
@@ -78,7 +78,7 @@ def conform_panel(
 ) -> pl.DataFrame:
     """Check ``panel`` against the panel contract and return a conforming frame.
 
-    Missing ``security``/``period`` columns are always a hard :class:`ConfigError`
+    Missing ``entity``/``period`` columns are always a hard :class:`ConfigError`
     (``E-SOURCE-PANEL``) - there is nothing to coerce to. Softer deviations (missing
     requested field columns, non-integer ``period``, columns outside the schema) raise
     under ``strict``; otherwise they emit :class:`PanelConformanceWarning`
@@ -86,7 +86,7 @@ def conform_panel(
     integer, and missing requested fields added as all-null columns.
     """
     src = f" '{source_name}'" if source_name else ""
-    missing_index = [c for c in (SECURITY_COL, PERIOD_COL) if c not in panel.columns]
+    missing_index = [c for c in (ENTITY_COL, PERIOD_COL) if c not in panel.columns]
     if missing_index:
         raise ConfigError(
             f"E-SOURCE-PANEL source{src} returned a panel missing required "
@@ -98,7 +98,7 @@ def conform_panel(
     missing_fields = sorted(f for f in fields if f not in provided)
     if missing_fields:
         issues.append(f"missing requested field column(s) {missing_fields}")
-    allowed = {SECURITY_COL, PERIOD_COL} | set(active_schema())
+    allowed = {ENTITY_COL, PERIOD_COL} | set(active_schema())
     extra = sorted(c for c in panel.columns if c not in allowed)
     if extra:
         issues.append(f"unexpected column(s) {extra}")

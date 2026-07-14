@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from trail import ast
-from trail.ops import PERIOD, SEC, build, safe_div
+from trail.ops import PERIOD, ENTITY, build, safe_div
 
 _BIN = {
     "add": lambda x, y: x + y, "sub": lambda x, y: x - y, "mul": lambda x, y: x * y,
@@ -105,7 +105,7 @@ class ModelPlan:
     exports: tuple[str, ...]
 
     def run(self, panel: pl.DataFrame) -> pl.DataFrame:
-        return self._lf_builder(panel).select([SEC, PERIOD, *self.exports]).collect()
+        return self._lf_builder(panel).select([ENTITY, PERIOD, *self.exports]).collect()
 
 
 def compile_model(model: ast.ModelDecl, universes: dict[str, ast.UniverseDecl]) -> ModelPlan:

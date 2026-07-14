@@ -1,6 +1,6 @@
 """The data-source adapter contract.
 
-A data source turns a set of requested canonical fields into a `(security x period)`
+A data source turns a set of requested canonical fields into a `(entity x period)`
 panel. The contract is two tiers:
 
 - Core tier: :class:`DataSource` - the minimum a provider must implement (``load``).
@@ -23,7 +23,7 @@ import polars as pl
 
 # Panel column contract: every panel a source returns has these two index columns,
 # plus one column per provided field (named by its canonical dotted path).
-SECURITY_COL = "security"
+ENTITY_COL = "entity"
 PERIOD_COL = "period"
 
 
@@ -44,10 +44,10 @@ class DataSource(ABC):
     def load(self, fields: set[str], *, periods: tuple[int, int] | None = None) -> pl.DataFrame:
         """Return a panel for ``fields``.
 
-        The frame has columns ``security`` (Utf8), ``period`` (integer), and one column
+        The frame has columns ``entity`` (Utf8), ``period`` (integer), and one column
         per provided field. It may return a superset of ``fields``. It may ignore
         ``periods`` (the runtime re-filters), but honoring it as a fetch bound is a
-        performance win. Rows must be unique on ``(security, period)``.
+        performance win. Rows must be unique on ``(entity, period)``.
         """
 
     def close(self) -> None:

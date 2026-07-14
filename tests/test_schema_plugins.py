@@ -51,7 +51,7 @@ def test_validate_rejects_field_without_plugin():
 
 def test_conform_panel_keeps_plugin_columns(macro_plugin):
     panel = pl.DataFrame(
-        {"security": ["USA"], "period": [2020], "macro.gdp": [1.0]}
+        {"entity": ["USA"], "period": [2020], "macro.gdp": [1.0]}
     ).with_columns(pl.col("period").cast(pl.Int32))
     # strict: a plugin column must be recognized as in-schema, not an unexpected column
     out = conform_panel(panel, {"macro.gdp"}, strict=True)

@@ -9,7 +9,7 @@ def minmax(x)         = (x - xs_min(x)) / (xs_max(x) - xs_min(x))
 def xs_mad(x)         = xs_median(abs(x - xs_median(x)))
 def robust_zscore(x)  = (x - xs_median(x)) / (1.4826 * xs_mad(x))
 
-# --- rolling (per security, trailing window) ---
+# --- rolling (per entity, trailing window) ---
 def roll_zscore(x, n) = (x - roll_mean(x, n)) / roll_std(x, n)
 def roll_range(x, n)  = roll_max(x, n) - roll_min(x, n)
 def roll_cv(x, n)     = roll_std(x, n) / roll_mean(x, n)

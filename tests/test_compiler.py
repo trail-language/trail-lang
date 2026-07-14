@@ -23,7 +23,7 @@ def test_div_by_zero_is_null():
 
 def test_coalesce_fills_null_field():
     df = _eval_expr("cash.stock_issued ?? 0")
-    aaa = df.filter(pl.col("security") == "AAA")
+    aaa = df.filter(pl.col("entity") == "AAA")
     assert aaa["out"].to_list() == [0.0] * 8
 
 
@@ -44,7 +44,7 @@ model m {
     # fixture: margin = 0.20 everywhere -> s1 = 2; net_income > 0 -> s2 = 1
     # composite = (2*3 + 1*1) / (2*3 + 1*1) = 1.0
     assert result["composite"].to_list() == pytest.approx([1.0] * 48)
-    assert set(result.columns) == {"security", "period", "composite"}
+    assert set(result.columns) == {"entity", "period", "composite"}
 
 
 def test_on_missing_skip_renormalizes():
@@ -58,7 +58,7 @@ model m {
 }
 ''')
     result = compile_model(prog.decls[0], {}).run(load_panel())
-    fff = result.filter(pl.col("security") == "FFF")  # interest_expense null -> s2 null -> skipped
+    fff = result.filter(pl.col("entity") == "FFF")  # interest_expense null -> s2 null -> skipped
     assert fff["composite"].to_list() == pytest.approx([1.0] * 8)  # 2*3 / 2*3
 
 
@@ -69,7 +69,7 @@ model m on tech { export rev = income.revenue }
 ''')
     universes = {d.name: d for d in prog.decls[:1]}
     result = compile_model(prog.decls[1], universes).run(load_panel())
-    assert set(result["security"].unique().to_list()) == {"AAA", "BBB", "CCC"}
+    assert set(result["entity"].unique().to_list()) == {"AAA", "BBB", "CCC"}
 
 
 def test_zscore_scoped_to_universe():

@@ -6,21 +6,21 @@ from trail.sources import PanelConformanceWarning, conform_panel
 
 
 def test_missing_period_errors_even_when_lenient():
-    p = pl.DataFrame({"security": ["A"], "income.revenue": [1.0]})
+    p = pl.DataFrame({"entity": ["A"], "income.revenue": [1.0]})
     with pytest.raises(ConfigError, match="E-SOURCE-PANEL"):
         conform_panel(p, {"income.revenue"}, strict=False)
 
 
 def test_conforming_panel_passes_through_unchanged():
     p = pl.DataFrame(
-        {"security": ["A"], "period": [2020], "income.revenue": [1.0]}
+        {"entity": ["A"], "period": [2020], "income.revenue": [1.0]}
     ).with_columns(pl.col("period").cast(pl.Int32))
     out = conform_panel(p, {"income.revenue"}, strict=True)
-    assert out.columns == ["security", "period", "income.revenue"]
+    assert out.columns == ["entity", "period", "income.revenue"]
 
 
 def test_strict_rejects_extra_columns_and_missing_fields():
-    p = pl.DataFrame({"security": ["A"], "period": [2020], "junk": [1]}).with_columns(
+    p = pl.DataFrame({"entity": ["A"], "period": [2020], "junk": [1]}).with_columns(
         pl.col("period").cast(pl.Int32)
     )
     with pytest.raises(ConfigError, match="E-SOURCE-PANEL"):
@@ -28,7 +28,7 @@ def test_strict_rejects_extra_columns_and_missing_fields():
 
 
 def test_lenient_warns_and_coerces():
-    p = pl.DataFrame({"security": ["A"], "period": ["2020"], "junk": [1]})
+    p = pl.DataFrame({"entity": ["A"], "period": ["2020"], "junk": [1]})
     with pytest.warns(PanelConformanceWarning):
         out = conform_panel(p, {"income.revenue"}, strict=False)
     assert "junk" not in out.columns  # extra column dropped

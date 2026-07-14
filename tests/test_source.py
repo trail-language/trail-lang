@@ -40,7 +40,7 @@ class _FullSource(ExtendedDataSource):
     def load(self, fields, *, periods=None):
         return pl.DataFrame(
             {
-                "security": ["A", "A", "B"],
+                "entity": ["A", "A", "B"],
                 "period": [2020, 2021, 2020],
                 "income.revenue": [1.0, 2.0, 3.0],
             }

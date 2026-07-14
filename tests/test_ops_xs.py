@@ -1,15 +1,15 @@
 import polars as pl
 import pytest
 
-from trail.ops import PERIOD, SEC, build
+from trail.ops import PERIOD, ENTITY, build
 
 # one period, 4 securities, two sectors
 _DF = pl.DataFrame({
-    SEC: ["A", "B", "C", "D"],
+    ENTITY: ["A", "B", "C", "D"],
     PERIOD: [2024] * 4,
     "meta.sector": ["Tech", "Tech", "Energy", "Energy"],
     "v": [1.0, 3.0, 10.0, 30.0],
-}).sort([SEC, PERIOD])
+}).sort([ENTITY, PERIOD])
 
 
 def _col(expr):

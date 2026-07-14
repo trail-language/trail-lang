@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from trail.schema import SCHEMA
+from trail.schema import kind_of
 from trail.source import (
     PERIOD_COL,
     SECURITY_COL,
@@ -23,7 +23,7 @@ _INT_DTYPES = {
     pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
 }
 _FLOAT_DTYPES = {pl.Float32, pl.Float64}
-_NUMERIC_KINDS = {"flow", "stock", "ratio", "per_share", "price"}
+_NUMERIC_KINDS = {"flow", "stock", "ratio", "per_share", "price", "level", "rate", "index"}
 
 
 def _is_integer(dtype) -> bool:
@@ -70,7 +70,7 @@ def assert_source_conforms(
     assert schema[SECURITY_COL] == pl.Utf8, f"'security' must be Utf8, got {schema[SECURITY_COL]}"
     assert _is_integer(schema[PERIOD_COL]), f"'period' must be integer, got {schema[PERIOD_COL]}"
     for f in fields:
-        if SCHEMA.get(f) and SCHEMA[f].kind in _NUMERIC_KINDS:
+        if kind_of(f) in _NUMERIC_KINDS:
             assert _is_numeric(schema[f]), f"numeric field '{f}' has non-numeric dtype {schema[f]}"
 
     if panel.height:

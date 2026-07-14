@@ -14,7 +14,7 @@ import polars as pl
 
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
-from trail.schema import SCHEMA
+from trail.schema import active_schema, kind_of
 from trail.source import PERIOD_COL, SECURITY_COL, DataSource
 
 __all__ = [
@@ -61,7 +61,7 @@ def _is_integer_dtype(dtype) -> bool:
 
 
 def _null_series(name: str, height: int) -> pl.Series:
-    kind = SCHEMA[name].kind if name in SCHEMA else "flow"
+    kind = kind_of(name) or "flow"
     if kind == "meta":
         dtype = pl.Boolean if name == "meta.is_active" else pl.Utf8
     else:
@@ -98,7 +98,7 @@ def conform_panel(
     missing_fields = sorted(f for f in fields if f not in provided)
     if missing_fields:
         issues.append(f"missing requested field column(s) {missing_fields}")
-    allowed = {SECURITY_COL, PERIOD_COL} | set(SCHEMA)
+    allowed = {SECURITY_COL, PERIOD_COL} | set(active_schema())
     extra = sorted(c for c in panel.columns if c not in allowed)
     if extra:
         issues.append(f"unexpected column(s) {extra}")

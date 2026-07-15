@@ -62,6 +62,6 @@ def test_median_deferred_warns():
 
 
 def test_nonannual_period_warns():
-    assert "W-PERIOD-DEFERRED" in codes("model m period monthly { a = income.revenue }")
-    assert "W-PERIOD-DEFERRED" in codes("signal s period quarterly = income.revenue")
-    assert "W-PERIOD-DEFERRED" not in codes("model m period annual { a = income.revenue }")
+    assert "W-PERIOD-DEFERRED" in codes("model m at monthly { a = income.revenue }")
+    assert "W-PERIOD-DEFERRED" in codes("signal s at quarterly = income.revenue")
+    assert "W-PERIOD-DEFERRED" not in codes("model m at annual { a = income.revenue }")

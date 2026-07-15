@@ -19,7 +19,7 @@ EXAMPLE = Path(__file__).parent.parent / "examples" / "piotroski.trail"
 def _oracle(pdf):
     out = {}
     for sec, g in pdf.groupby("entity"):
-        g = g.sort_values("period").reset_index(drop=True)
+        g = g.sort_values("time").reset_index(drop=True)
         assets = g["balance.total_assets"]
         avg_assets = (assets + assets.shift(1)) / 2
         roa = g["income.net_income"] / avg_assets
@@ -47,8 +47,8 @@ def _oracle(pdf):
             flag(to > to.shift(1), to, to.shift(1)),
         ]
         total = np.column_stack(flags).sum(axis=1)  # NaN if any flag NaN
-        for period, val in zip(g["period"], total):
-            out[(sec, int(period))] = None if np.isnan(val) else int(val)
+        for period, val in zip(g["time"], total):
+            out[(sec, period.year)] = None if np.isnan(val) else int(val)
     return out
 
 
@@ -61,7 +61,7 @@ def test_fscore_matches_pandas_oracle():
     expected = _oracle(load_panel().to_pandas())
     checked = 0
     for row in result.iter_rows(named=True):
-        key = (row["entity"], row["period"])
+        key = (row["entity"], row["time"].year)
         assert row["fscore"] == expected[key], (key, row["fscore"], expected[key])
         checked += 1
     assert checked == 48

@@ -1,6 +1,6 @@
 universe all_active = stocks where meta.is_active
 
-model piotroski on all_active period annual {
+model piotroski on all_active at annual {
     desc "Piotroski F-Score (9 binary signals)"
 
     roa        = income.net_income / avg2(balance.total_assets)

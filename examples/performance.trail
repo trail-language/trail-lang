@@ -1,6 +1,6 @@
 universe all_active = stocks where meta.is_active
 
-model performance on all_active period annual {
+model performance on all_active at annual {
     desc "v1 performance.pel translation (fixture-field subset)"
 
     revenue_cagr = cagr(income.revenue, 4)

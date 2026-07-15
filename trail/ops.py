@@ -1,13 +1,13 @@
 """Operator library: every Trail function lowered to a vectorized Polars expression.
 
-The panel is always sorted [ENTITY, PERIOD]; per-entity ops close over that ordering.
+The panel is always sorted [ENTITY, TIME]; per-entity ops close over that ordering.
 """
 from __future__ import annotations
 
 import polars as pl
 
 ENTITY = "entity"
-PERIOD = "period"
+TIME = "time"
 
 
 def _x(v) -> pl.Expr:
@@ -21,7 +21,7 @@ def safe_div(num: pl.Expr, den: pl.Expr) -> pl.Expr:
 
 
 def _group(by: tuple[str, ...] | None) -> list[str]:
-    return [PERIOD] + ([".".join(by)] if by else [])
+    return [TIME] + ([".".join(by)] if by else [])
 
 
 def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl.Expr:

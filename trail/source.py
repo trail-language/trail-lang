@@ -1,6 +1,6 @@
 """The data-source adapter contract.
 
-A data source turns a set of requested canonical fields into a `(entity x period)`
+A data source turns a set of requested canonical fields into a `(entity x time)`
 panel. The contract is two tiers:
 
 - Core tier: :class:`DataSource` - the minimum a provider must implement (``load``).
@@ -24,7 +24,7 @@ import polars as pl
 # Panel column contract: every panel a source returns has these two index columns,
 # plus one column per provided field (named by its canonical dotted path).
 ENTITY_COL = "entity"
-PERIOD_COL = "period"
+TIME_COL = "time"
 
 
 class DataSource(ABC):
@@ -44,7 +44,7 @@ class DataSource(ABC):
     def load(self, fields: set[str], *, periods: tuple[int, int] | None = None) -> pl.DataFrame:
         """Return a panel for ``fields``.
 
-        The frame has columns ``entity`` (Utf8), ``period`` (integer), and one column
+        The frame has columns ``entity`` (Utf8), ``time`` (Datetime), and one column
         per provided field. It may return a superset of ``fields``. It may ignore
         ``periods`` (the runtime re-filters), but honoring it as a fetch bound is a
         performance win. Rows must be unique on ``(entity, period)``.
@@ -86,9 +86,9 @@ class SupportsDiscovery(Protocol):
 
 @runtime_checkable
 class SupportsUniverse(Protocol):
-    """A source that can enumerate the securities it can serve."""
+    """A source that can enumerate the entities it can serve."""
 
-    def securities(self, universe: str | None = None) -> list[str]: ...
+    def entities(self, universe: str | None = None) -> list[str]: ...
 
 
 @runtime_checkable
@@ -112,7 +112,7 @@ class ExtendedDataSource(DataSource, ABC):
     def describe_field(self, field: str) -> FieldInfo | None: ...
 
     @abstractmethod
-    def securities(self, universe: str | None = None) -> list[str]: ...
+    def entities(self, universe: str | None = None) -> list[str]: ...
 
     @abstractmethod
     def capabilities(self) -> Capabilities: ...

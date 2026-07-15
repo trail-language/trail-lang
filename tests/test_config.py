@@ -36,7 +36,7 @@ def test_yaml_parsed_and_period_bounds_applied(tmp_path):
     cfg = load_config(str(f))
     assert cfg.periods == (2019, 2022)
     panel = load_panel_for(cfg, {"income.revenue"})
-    years = panel["period"].unique().sort().to_list()
+    years = panel["time"].dt.year().unique().sort().to_list()
     assert years == [2019, 2020, 2021, 2022]
 
 

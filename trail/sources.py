@@ -15,7 +15,7 @@ import polars as pl
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
-from trail.source import PERIOD_COL, ENTITY_COL, DataSource
+from trail.source import TIME_COL, ENTITY_COL, DataSource
 
 __all__ = [
     "FixtureSource",
@@ -47,17 +47,12 @@ def fixture(options: dict) -> FixtureSource:
     return FixtureSource(options)
 
 
-_INT_DTYPES = {
-    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
-}
+#: canonical time dtype (a period-end instant); a Date time column is normalized to this
+CANON_TIME = pl.Datetime("us")
 
 
-def _is_integer_dtype(dtype) -> bool:
-    try:
-        return bool(dtype.is_integer())
-    except AttributeError:
-        return dtype in _INT_DTYPES
+def _is_temporal_dtype(dtype) -> bool:
+    return dtype == pl.Date or isinstance(dtype, pl.Datetime)
 
 
 def _null_series(name: str, height: int) -> pl.Series:
@@ -78,15 +73,16 @@ def conform_panel(
 ) -> pl.DataFrame:
     """Check ``panel`` against the panel contract and return a conforming frame.
 
-    Missing ``entity``/``period`` columns are always a hard :class:`ConfigError`
+    Missing ``entity``/``time`` columns are always a hard :class:`ConfigError`
     (``E-SOURCE-PANEL``) - there is nothing to coerce to. Softer deviations (missing
-    requested field columns, non-integer ``period``, columns outside the schema) raise
+    requested field columns, a non-temporal ``time``, columns outside the schema) raise
     under ``strict``; otherwise they emit :class:`PanelConformanceWarning`
-    (``W-SOURCE-PANEL``) and are coerced: unknown columns dropped, ``period`` cast to an
-    integer, and missing requested fields added as all-null columns.
+    (``W-SOURCE-PANEL``) and are coerced: unknown columns dropped and missing requested
+    fields added as all-null columns. A ``Date`` ``time`` is normalized to the canonical
+    period-end ``Datetime``.
     """
     src = f" '{source_name}'" if source_name else ""
-    missing_index = [c for c in (ENTITY_COL, PERIOD_COL) if c not in panel.columns]
+    missing_index = [c for c in (ENTITY_COL, TIME_COL) if c not in panel.columns]
     if missing_index:
         raise ConfigError(
             f"E-SOURCE-PANEL source{src} returned a panel missing required "
@@ -98,25 +94,24 @@ def conform_panel(
     missing_fields = sorted(f for f in fields if f not in provided)
     if missing_fields:
         issues.append(f"missing requested field column(s) {missing_fields}")
-    allowed = {ENTITY_COL, PERIOD_COL} | set(active_schema())
+    allowed = {ENTITY_COL, TIME_COL} | set(active_schema())
     extra = sorted(c for c in panel.columns if c not in allowed)
     if extra:
         issues.append(f"unexpected column(s) {extra}")
-    if not _is_integer_dtype(panel.schema[PERIOD_COL]):
-        issues.append(f"'period' has non-integer dtype {panel.schema[PERIOD_COL]}")
+    if not _is_temporal_dtype(panel.schema[TIME_COL]):
+        issues.append(f"'time' has non-temporal dtype {panel.schema[TIME_COL]}")
 
-    if not issues:
-        return panel
-    if strict:
+    if strict and issues:
         raise ConfigError(f"E-SOURCE-PANEL source{src} " + "; ".join(issues))
-
     for msg in issues:
         warnings.warn(f"W-SOURCE-PANEL source{src} {msg}", PanelConformanceWarning, stacklevel=2)
-    panel = panel.select([c for c in panel.columns if c in allowed])
-    if not _is_integer_dtype(panel.schema[PERIOD_COL]):
-        panel = panel.with_columns(pl.col(PERIOD_COL).cast(pl.Int64, strict=False))
-    if missing_fields:
-        panel = panel.with_columns([_null_series(f, panel.height) for f in missing_fields])
+    if issues:
+        panel = panel.select([c for c in panel.columns if c in allowed])
+        if missing_fields:
+            panel = panel.with_columns([_null_series(f, panel.height) for f in missing_fields])
+    # normalize a valid temporal time column to the canonical period-end Datetime
+    if _is_temporal_dtype(panel.schema[TIME_COL]) and panel.schema[TIME_COL] != CANON_TIME:
+        panel = panel.with_columns(pl.col(TIME_COL).cast(CANON_TIME))
     return panel
 
 
@@ -131,5 +126,6 @@ def load_panel_for(config: Config, fields: set[str]) -> pl.DataFrame:
     panel = conform_panel(panel, fields, strict=config.strict, source_name=primary)
     if config.periods is not None:
         lo, hi = config.periods
-        panel = panel.filter((pl.col(PERIOD_COL) >= lo) & (pl.col(PERIOD_COL) <= hi))
+        yr = pl.col(TIME_COL).dt.year()
+        panel = panel.filter((yr >= lo) & (yr <= hi))
     return panel

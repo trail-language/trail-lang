@@ -15,7 +15,7 @@ def _run(exports: str):
 
 
 def _cell(df, col, sec, period):
-    return df.filter((pl.col("entity") == sec) & (pl.col("period") == period))[col][0]
+    return df.filter((pl.col("entity") == sec) & (pl.col("time").dt.year() == period))[col][0]
 
 
 def test_yoy_avg2_drawdown():

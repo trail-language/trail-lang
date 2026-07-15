@@ -1,5 +1,7 @@
-"""Deterministic fixture panel: 6 securities x FY2017-2024, closed-form values."""
+"""Deterministic fixture panel: 6 entities x FY2017-2024, closed-form values."""
 from __future__ import annotations
+
+import datetime as dt
 
 import polars as pl
 
@@ -18,7 +20,7 @@ def load_panel() -> pl.DataFrame:
             rev = _BASE[sec] * (1 + _GROWTH[sec]) ** t
             row = {
                 "entity": sec,
-                "period": year,
+                "time": dt.datetime(year, 12, 31),
                 "income.revenue": rev,
                 "income.cogs": rev * 0.55,
                 "income.gross_profit": rev * 0.45,
@@ -51,5 +53,5 @@ def load_panel() -> pl.DataFrame:
                 "meta.is_active": True,
             }
             rows.append(row)
-    df = pl.DataFrame(rows).with_columns(pl.col("period").cast(pl.Int32))
-    return df.sort(["entity", "period"])
+    df = pl.DataFrame(rows).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    return df.sort(["entity", "time"])

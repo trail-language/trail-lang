@@ -8,6 +8,7 @@ import polars as pl
 _SECS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 _SECTOR = {"AAA": "Tech", "BBB": "Tech", "CCC": "Tech", "DDD": "Energy", "EEE": "Energy", "FFF": "Financials"}
 _EXCH = {"AAA": "NASDAQ", "BBB": "NASDAQ", "CCC": "NYSE", "DDD": "NYSE", "EEE": "NYSE", "FFF": "NYSE"}
+_COUNTRY = {"AAA": "USA", "BBB": "USA", "CCC": "USA", "DDD": "CAN", "EEE": "CAN", "FFF": "GBR"}
 _BASE = {"AAA": 100.0, "BBB": 200.0, "CCC": 150.0, "DDD": 300.0, "EEE": 250.0, "FFF": 400.0}
 _GROWTH = {"AAA": 0.10, "BBB": 0.05, "CCC": 0.08, "DDD": 0.02, "EEE": -0.03, "FFF": 0.04}
 YEARS = list(range(2017, 2025))
@@ -51,6 +52,7 @@ def load_panel() -> pl.DataFrame:
                 "meta.exchange": _EXCH[sec],
                 "meta.market_cap": rev * 3.0e6,
                 "meta.is_active": True,
+                "meta.country": _COUNTRY[sec],
             }
             rows.append(row)
     df = pl.DataFrame(rows).with_columns(pl.col("time").cast(pl.Datetime("us")))

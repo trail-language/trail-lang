@@ -8,11 +8,13 @@ they are warned and coerced.
 """
 from __future__ import annotations
 
+import inspect
 import warnings
+from functools import lru_cache
 
 import polars as pl
 
-from trail.align import AlignmentWarning, align_and_merge, finest, is_broadcast
+from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest, is_broadcast
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
@@ -121,21 +123,16 @@ def _source_freq(src) -> str:
     return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
 
 
-def _source_order(config: Config) -> list[str]:
-    """Sources to try, precedence.default first, then any others (for field assignment)."""
-    order = list(config.precedence.get("default", []))
-    order += [s for s in config.sources if s not in order]
-    return order
+def _source_dim(src) -> str:
+    return src.capabilities().entity_dim if isinstance(src, SupportsCapabilities) else "entity"
 
 
-def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None) -> pl.DataFrame:
-    """Load the configured sources, assign each requested field to its first provider
-    (precedence), align every source panel to the target frequency, and merge on
-    ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
-    referenced). A lone source with no explicit target is used at its native frequency.
-    """
+def _foreign_dims_for(config: Config, fields: set[str]) -> set[str]:
+    """Entity dimensions (!= 'entity') required because a requested field's assigned provider
+    is keyed by a coarser dimension (e.g. a country-keyed macro source). Each such dimension
+    needs its bridge meta field loaded so the align engine can remap it onto entities."""
+    dims: set[str] = set()
     remaining = set(fields)
-    loaded: list[tuple[pl.DataFrame, str]] = []
     for sname in _source_order(config):
         if not remaining:
             break
@@ -145,10 +142,67 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
             take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
             if not take:
                 continue
-            panel = conform_panel(src.load(take, periods=config.periods), take,
+            if _source_dim(src) != "entity":
+                dims.add(_source_dim(src))
+            remaining -= take
+        finally:
+            src.close()
+    return dims
+
+
+@lru_cache(maxsize=None)
+def _accepts_entities(load_func) -> bool:
+    """Whether a source's load() opts into the entity-scoping kwarg (a named `entities`
+    param or **kwargs). Detection means we never hand `entities=` to a source that would
+    raise TypeError on it - the ABC signature stays `load(self, fields, *, periods)`."""
+    try:
+        params = inspect.signature(load_func).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "entities" in params
+
+
+def _source_order(config: Config) -> list[str]:
+    """Sources to try, precedence.default first, then any others (for field assignment)."""
+    order = list(config.precedence.get("default", []))
+    order += [s for s in config.sources if s not in order]
+    return order
+
+
+def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
+                   entities: list[str] | None = None) -> pl.DataFrame:
+    """Load the configured sources, assign each requested field to its first provider
+    (precedence), align every source panel to the target frequency, and merge on
+    ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
+    referenced). `entities` is the candidate entity universe to scope the fetch to; it is
+    passed only to sources that opt in (see :func:`_accepts_entities`), else ignored. A lone
+    source with no explicit target is used at its native frequency.
+    """
+    # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
+    # loaded too, even though the model never names it - inject it into the load plan.
+    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, fields) if d in _DIM_MAP_COL}
+    remaining = set(fields) | bridges
+    loaded: list[tuple[pl.DataFrame, str, str]] = []
+    for sname in _source_order(config):
+        if not remaining:
+            break
+        spec = config.sources[sname]
+        src = resolve_driver(spec.driver)(spec.options)
+        try:
+            take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
+            if not take:
+                continue
+            kw = {"periods": config.periods}
+            # only scope by the entity universe when the source is keyed by that dimension - a
+            # country-keyed source must not be handed stock tickers as its fetch scope.
+            if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
+                kw["entities"] = entities
+            panel = conform_panel(src.load(take, **kw), take,
                                   strict=config.strict, source_name=sname)
             panel = panel.select([ENTITY_COL, TIME_COL, *sorted(take)])  # disjoint field set
-            loaded.append((panel, _source_freq(src)))
+            loaded.append((panel, _source_freq(src), _source_dim(src)))
             remaining -= take
         finally:
             src.close()
@@ -159,7 +213,7 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     if len(loaded) == 1 and target_freq is None and not is_broadcast(loaded[0][0]):
         panel = loaded[0][0]
     else:  # a lone broadcast source routes here too, so align_and_merge can reject it clearly
-        panel = align_and_merge(loaded, target_freq or finest([f for _, f in loaded]))
+        panel = align_and_merge(loaded, target_freq or finest([f for _, f, _ in loaded]))
 
     if config.periods is not None:
         lo, hi = config.periods

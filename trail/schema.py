@@ -55,6 +55,7 @@ _FIELDS: list[tuple[str, str]] = [
     ("meta.exchange", "meta"),
     ("meta.market_cap", "meta"),
     ("meta.is_active", "meta"),
+    ("meta.country", "meta"),  # ISO3; the bridge that maps an entity to a country-keyed source
 ]
 
 _CORE: dict[str, FieldSpec] = {c: FieldSpec(c, k) for c, k in _FIELDS}

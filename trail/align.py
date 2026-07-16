@@ -28,6 +28,10 @@ FREQ_ORDER = ["annual", "quarterly", "monthly", "weekly", "daily", "hourly", "mi
 # kinds whose per-period value must not be repeated onto a finer grid (a total/return mis-scales).
 _UPSAMPLE_UNSAFE = {"flow", "return", "per_share"}
 
+# a coarse entity dimension -> the grid meta field that maps a canonical entity to that dimension's
+# key. A source keyed by "country" is remapped onto stocks through each stock's meta.country.
+_DIM_MAP_COL = {"country": "meta.country"}
+
 
 class AlignmentWarning(UserWarning):
     """A cross-source alignment produced a result that may be semantically surprising."""
@@ -120,21 +124,79 @@ def _align_broadcast(panel: pl.DataFrame, native: str, target_freq: str, grid: p
     return grid.sort(TIME_COL).join_asof(right, on=TIME_COL, strategy="backward", check_sortedness=False)
 
 
-def align_and_merge(loaded: list[tuple[pl.DataFrame, str]], target_freq: str) -> pl.DataFrame:
-    """Align each `(panel, native_freq)` to `target_freq` and merge on `(entity, time)`.
+def _align_by_dimension(panel: pl.DataFrame, native: str, target_freq: str,
+                        out: pl.DataFrame, dim: str) -> pl.DataFrame:
+    """Remap a foreign-dimension source (e.g. country) onto canonical entities.
 
-    Field sets across sources are assumed disjoint (assigned by precedence before loading),
-    so the merge is a clean left-join per source with no per-cell coalescing.
+    The source's `entity` column holds the dimension key; `out` carries a bridge meta column
+    (meta.country) giving each entity's key. Each entity gets the foreign row for its key,
+    time-aligned (as-of for a coarser source). The map lives in the data plane (§5.4).
     """
+    map_col = _DIM_MAP_COL.get(dim)
+    if map_col is None:
+        raise ConfigError(f"E-DIM-UNKNOWN source declares unsupported entity dimension '{dim}'")
+    if map_col not in out.columns:
+        raise ConfigError(
+            f"E-DIM-UNMAPPED a source is keyed by dimension '{dim}' but no entity-bearing source "
+            f"provides the bridge field '{map_col}'; add it to a source that supplies your entities"
+        )
+    body = panel.rename({ENTITY_COL: map_col})  # the foreign entity is the map key
+    fields = [c for c in body.columns if c not in (map_col, TIME_COL)]
+    if _finer_or_equal(native, target_freq):
+        red = (body.group_by([pl.col(map_col), _period_end(target_freq).alias(TIME_COL)])
+                   .agg([_kind_agg(f) for f in fields]))
+        return out.join(red, on=[map_col, TIME_COL], how="left").select([ENTITY_COL, TIME_COL, *fields])
+    _warn_upsample_flow(panel, stacklevel=4)  # +1 frame: runs inside _align_by_dimension
+    left = out.select([ENTITY_COL, TIME_COL, map_col]).sort([map_col, TIME_COL])
+    right = body.sort([map_col, TIME_COL])
+    return (left.join_asof(right, on=TIME_COL, by=map_col, strategy="backward", check_sortedness=False)
+                .select([ENTITY_COL, TIME_COL, *fields]))
+
+
+def _left_join_fields(out: pl.DataFrame, aligned: pl.DataFrame) -> pl.DataFrame:
+    cols = [c for c in aligned.columns if c not in (ENTITY_COL, TIME_COL)]
+    return out.join(aligned.select([ENTITY_COL, TIME_COL, *cols]), on=[ENTITY_COL, TIME_COL], how="left")
+
+
+def _unpack(item: tuple) -> tuple[pl.DataFrame, str, str]:
+    """Accept (panel, freq) or (panel, freq, entity_dim); default dim to 'entity'."""
+    panel, freq, *rest = item
+    return panel, freq, (rest[0] if rest else "entity")
+
+
+def align_and_merge(loaded: list[tuple], target_freq: str) -> pl.DataFrame:
+    """Align each source panel to `target_freq` and merge on `(entity, time)`.
+
+    Items are `(panel, native_freq[, entity_dim])`. Field sets are disjoint (assigned by
+    precedence before loading), so each source is a clean left-join. Three source classes,
+    merged in order so each pass sees what it needs:
+
+    - **canonical** (entity-keyed) define the grid and are downsampled / as-of upsampled;
+    - **broadcast** (sentinel `*`) are replicated across every entity by time alignment;
+    - **foreign-dimension** (e.g. country) are remapped onto entities via a bridge meta column,
+      which the canonical pass must populate first.
+    """
+    items = [_unpack(x) for x in loaded]
+    canonical = [(p, f) for p, f, d in items if d == "entity" and not is_broadcast(p)]
+    broadcast = [(p, f) for p, f, d in items if d == "entity" and is_broadcast(p)]
+    foreign = [(p, f, d) for p, f, d in items if d != "entity"]
+    # with no entity-keyed source, the foreign dimension IS the entity axis (e.g. a lone
+    # country model): treat those panels as canonical rather than remapping onto nothing.
+    # A broadcast source may still ride along (it replicates onto whatever axis results).
+    # Coherent only for a single dimension; two distinct foreign axes have no common entity.
+    if not canonical and foreign:
+        dims = {d for _, _, d in foreign}
+        if len(dims) > 1:
+            raise ConfigError(
+                f"E-DIM-AMBIGUOUS no entity-bearing source, and foreign sources span multiple "
+                f"dimensions {sorted(dims)}; there is no single entity axis to compute on"
+            )
+        canonical = [(p, f) for p, f, _ in foreign]
+        foreign = []
+
     pe = _period_end(target_freq)
-    # the grid is defined by real-entity sources at or finer than the target - the ones that
-    # natively populate this frequency. Coarser sources are as-of enrichment and add no rows;
-    # broadcast (sentinel-entity) sources have no entity axis, so they never define the grid
-    # (a lone macro value must not stamp a phantom row onto a daily price grid, and the sentinel
-    # '*' must never surface as a real output entity).
-    non_bcast = [(p, f) for p, f in loaded if not is_broadcast(p)]
-    native = [p for p, f in non_bcast if _finer_or_equal(f, target_freq)]
-    grid_src = native or [p for p, _ in non_bcast]  # coarser real-entity sources still define a grid
+    native = [p for p, f in canonical if _finer_or_equal(f, target_freq)]
+    grid_src = native or [p for p, _ in canonical]  # coarser real-entity sources still define a grid
     if not grid_src:  # every source is a global broadcast: nothing to broadcast onto
         raise ConfigError(
             "E-NO-ENTITY every source providing these fields is a global broadcast series; "
@@ -146,14 +208,15 @@ def align_and_merge(loaded: list[tuple[pl.DataFrame, str]], target_freq: str) ->
         .sort([ENTITY_COL, TIME_COL])
     )
     out = grid
-    for panel, nfreq in loaded:
-        if is_broadcast(panel):
-            aligned = _align_broadcast(panel, nfreq, target_freq, grid)
-        elif _finer_or_equal(nfreq, target_freq):
+    for panel, nfreq in canonical:  # pass 1: entity-keyed sources (also populate any bridge column)
+        if _finer_or_equal(nfreq, target_freq):
             aligned = _downsample(panel, target_freq)
         else:
             _warn_upsample_flow(panel)
             aligned = _upsample_asof(panel, grid)
-        cols = [c for c in aligned.columns if c not in (ENTITY_COL, TIME_COL)]
-        out = out.join(aligned.select([ENTITY_COL, TIME_COL, *cols]), on=[ENTITY_COL, TIME_COL], how="left")
+        out = _left_join_fields(out, aligned)
+    for panel, nfreq in broadcast:  # pass 2: global series replicated across entities
+        out = _left_join_fields(out, _align_broadcast(panel, nfreq, target_freq, grid))
+    for panel, nfreq, dim in foreign:  # pass 3: foreign dimensions need the bridge column present
+        out = _left_join_fields(out, _align_by_dimension(panel, nfreq, target_freq, out, dim))
     return out.sort([ENTITY_COL, TIME_COL])

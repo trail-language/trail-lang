@@ -76,6 +76,37 @@ def test_unavailable_frequency_raises(monkeypatch):
         sources.load_panel_for(_cfg(), {"monthly.income.revenue"}, target_freq="monthly")
 
 
+class _PerFreqAvail(ExtendedDataSource):
+    """Serves statements at annual but only price at daily - per-frequency availability."""
+
+    def load(self, fields, *, periods=None, frequency=None):
+        col = "price.adj_close" if frequency == "daily" else "income.revenue"
+        return pl.DataFrame({"entity": ["AAA"], "time": [_T], col: [1.0]}).with_columns(
+            pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self, frequency=None):
+        return {"price.adj_close"} if frequency == "daily" else {"income.revenue", "price.adj_close"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["AAA"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual", frequencies=("annual", "daily"))
+
+
+def test_per_frequency_availability(monkeypatch):
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _PerFreqAvail)
+    # daily price is servable
+    panel = sources.load_panel_for(_cfg(), {"daily.price.adj_close"}, target_freq="daily")
+    assert panel["daily.price.adj_close"].to_list() == [1.0]
+    # daily statements are not, even though the source serves the field at annual
+    with pytest.raises(ConfigError, match="E-FREQ-UNAVAILABLE"):
+        sources.load_panel_for(_cfg(), {"daily.income.revenue"}, target_freq="daily")
+
+
 def test_unserved_bare_field_raises_cleanly(monkeypatch):
     # a bare field no source provides must be a clean load-time error, not a
     # ColumnNotFoundError from polars at compile time (e.g. price.adj_close on edgar)

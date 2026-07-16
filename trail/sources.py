@@ -141,10 +141,7 @@ def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]]) -> 
         spec = config.sources[sname]
         src = resolve_driver(spec.driver)(spec.options)
         try:
-            avail = src.available_fields() if isinstance(src, SupportsDiscovery) else None
-            sfreqs = _source_freqs(src)
-            claimed = {(fq, canon) for (fq, canon) in pending
-                       if (avail is None or canon in avail) and (fq is None or fq in sfreqs)}
+            claimed = set(_claimable(src, pending))
             if not claimed:
                 continue
             pending -= claimed
@@ -156,17 +153,21 @@ def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]]) -> 
 
 
 @lru_cache(maxsize=None)
-def _accepts_entities(load_func) -> bool:
-    """Whether a source's load() opts into the entity-scoping kwarg (a named `entities`
-    param or **kwargs). Detection means we never hand `entities=` to a source that would
-    raise TypeError on it - the ABC signature stays `load(self, fields, *, periods)`."""
+def _accepts_kwarg(func, name: str) -> bool:
+    """Whether `func` opts into keyword `name` (a named param or **kwargs). Feature
+    detection keeps optional seams (entities=, frequency=) off the base contracts: a
+    source that has not opted in is never handed the kwarg and cannot raise TypeError."""
     try:
-        params = inspect.signature(load_func).parameters
+        params = inspect.signature(func).parameters
     except (TypeError, ValueError):
         return False
     if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return True
-    return "entities" in params
+    return name in params
+
+
+def _accepts_entities(load_func) -> bool:
+    return _accepts_kwarg(load_func, "entities")
 
 
 def _source_order(config: Config) -> list[str]:
@@ -193,16 +194,37 @@ def _source_freqs(src) -> tuple[str, ...]:
     return caps.frequencies or (caps.frequency,)
 
 
-@lru_cache(maxsize=None)
 def _accepts_frequency(load_func) -> bool:
-    """Whether a source's load() opts into the frequency kwarg (named `frequency` or **kwargs)."""
-    try:
-        params = inspect.signature(load_func).parameters
-    except (TypeError, ValueError):
-        return False
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return True
-    return "frequency" in params
+    return _accepts_kwarg(load_func, "frequency")
+
+
+def _avail(src, fq: str | None):
+    """Fields the source can serve at frequency `fq` (None = its default), or None when the
+    source has no discovery. A source whose available_fields() opts into `frequency=` may
+    serve different fields per frequency (e.g. statements at annual/quarterly, price at daily)."""
+    if not isinstance(src, SupportsDiscovery):
+        return None
+    if _accepts_kwarg(type(src).available_fields, "frequency"):
+        return src.available_fields(frequency=fq or _source_freq(src))
+    return src.available_fields()
+
+
+def _claimable(src, requests):
+    """The subset of requests this source can serve. Each request is a tuple whose first two
+    elements are (frequency | None, canonical); discovery- and frequency-aware."""
+    sfreqs = _source_freqs(src)
+    cache: dict = {}
+    out = []
+    for r in requests:
+        fq, canon = r[0], r[1]
+        if fq is not None and fq not in sfreqs:
+            continue
+        if fq not in cache:
+            cache[fq] = _avail(src, fq)
+        a = cache[fq]
+        if a is None or canon in a:
+            out.append(r)
+    return out
 
 
 def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
@@ -229,10 +251,7 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
         spec = config.sources[sname]
         src = resolve_driver(spec.driver)(spec.options)
         try:
-            avail = src.available_fields() if isinstance(src, SupportsDiscovery) else None
-            sfreqs = _source_freqs(src)
-            claimed = [(fq, canon, final) for (fq, canon, final) in pending
-                       if (avail is None or canon in avail) and (fq is None or fq in sfreqs)]
+            claimed = _claimable(src, pending)
             if not claimed:
                 continue
             pending = [r for r in pending if r not in claimed]

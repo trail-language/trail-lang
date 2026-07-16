@@ -17,13 +17,21 @@ import warnings
 
 import polars as pl
 
+from trail.ast import FREQUENCIES
 from trail.config import ConfigError
 from trail.ops import _AGG, AGG_FOR_KIND, FREQ_DUR
 from trail.schema import kind_of
 from trail.source import BROADCAST_ENTITY, ENTITY_COL, TIME_COL
 
-# coarse -> fine
-FREQ_ORDER = ["annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute"]
+# coarse -> fine; shared with the parser/loader via trail.ast
+FREQ_ORDER = list(FREQUENCIES)
+
+
+def _canonical(col: str) -> str:
+    """Strip a frequency prefix from a physical column so kind lookup uses the canonical field
+    (annual.balance.total_assets -> balance.total_assets), else the column unchanged."""
+    head, _, rest = col.partition(".")
+    return rest if head in FREQ_ORDER and rest.count(".") >= 1 else col
 
 # kinds whose per-period value must not be repeated onto a finer grid (a total/return mis-scales).
 _UPSAMPLE_UNSAFE = {"flow", "return", "per_share"}
@@ -53,7 +61,7 @@ def _period_end(freq: str) -> pl.Expr:
 
 def _kind_agg(field: str) -> pl.Expr:
     """Reduce a field's values within a target bucket by its kind (§4.4 automatic rule)."""
-    agg = AGG_FOR_KIND.get(kind_of(field) or "flow", "last")
+    agg = AGG_FOR_KIND.get(kind_of(_canonical(field)) or "flow", "last")
     c = pl.col(field)
     if agg == "last":  # order-dependent: take the latest by time, not group arrival order
         return c.sort_by(pl.col(TIME_COL)).last().alias(field)
@@ -82,7 +90,7 @@ def _upsample_asof(panel: pl.DataFrame, grid: pl.DataFrame) -> pl.DataFrame:
 
 def _warn_upsample_flow(panel: pl.DataFrame, stacklevel: int = 3) -> None:
     for f in _fields(panel):
-        k = kind_of(f)
+        k = kind_of(_canonical(f))
         if k in _UPSAMPLE_UNSAFE:
             warnings.warn(
                 f"W-UPSAMPLE-FLOW field '{f}' (kind {k}) is carried forward by as-of onto a finer "

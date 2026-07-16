@@ -74,7 +74,10 @@ class FieldInfo:
 class Capabilities:
     """A source's self-description: what it serves and where it comes from."""
 
-    frequency: str  # annual | quarterly | mixed
+    frequency: str  # the default/native frequency
+    #: every frequency this source can serve (for a frequency-qualified field like
+    #: quarterly.income.revenue); empty means single-frequency (just `frequency`).
+    frequencies: tuple[str, ...] = ()
     period_range: tuple[int, int] | None = None
     forms: tuple[str, ...] = field(default_factory=tuple)
     provides_meta: bool = False

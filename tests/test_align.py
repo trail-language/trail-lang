@@ -181,6 +181,21 @@ def test_country_dim_annual_asof_onto_quarterly_stock_grid(gmd_plugin):
     assert out["gmd.gdp"].to_list() == [None, None, 1000.0, 1100.0]
 
 
+def test_qualified_column_downsample_respects_canonical_kind():
+    # a frequency-prefixed column must aggregate by its canonical field's kind, not default to flow
+    q = [dt.datetime(2022, m, 1) for m in (3, 6, 9, 12)]
+    panel = pl.DataFrame({
+        "entity": ["X"] * 4, "time": q,
+        "quarterly.income.revenue": [1.0, 2, 3, 4],        # flow -> sum
+        "quarterly.balance.total_assets": [10.0, 20, 30, 40],  # stock -> last
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    out = align_and_merge([(panel, "quarterly", "entity")], "annual")
+    assert out.height == 1
+    row = out.to_dicts()[0]
+    assert row["quarterly.income.revenue"] == 10.0        # 1+2+3+4 (flow summed)
+    assert row["quarterly.balance.total_assets"] == 40.0  # last (stock), NOT summed to 100
+
+
 def test_multiple_foreign_dims_without_entity_source_raises(gmd_plugin):
     other = pl.DataFrame({
         "entity": ["EU"], "time": [dt.datetime(2022, 12, 31)], "other.metric": [5.0],

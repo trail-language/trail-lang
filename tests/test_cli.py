@@ -27,6 +27,17 @@ def test_run_prints_exports(tmp_path):
     assert res.exit_code == 0 and "margin" in res.output
 
 
+def test_run_ignores_unserved_frequency_in_another_model(tmp_path):
+    # model n references quarterly.* (unservable by the annual fixture); running m must not abort
+    f = tmp_path / "multi.trail"
+    f.write_text(
+        "model m { export margin = income.operating_income / income.revenue }\n"
+        "model n at quarterly { export q = quarterly.income.revenue }\n"
+    )
+    res = CliRunner().invoke(main, ["run", str(f), "--model", "m"])
+    assert res.exit_code == 0 and "margin" in res.output
+
+
 def test_syntax_error_is_a_clean_message(tmp_path):
     f = tmp_path / "bad.trail"
     f.write_text("model m { a = income.revenue +++ }\n")

@@ -41,7 +41,7 @@ def compile_expr(e: ast.Expr, defined: set[str]) -> pl.Expr:
         case ast.NameRef():
             return pl.col(e.name)
         case ast.FieldRef():
-            return pl.col(e.column)
+            return pl.col(e.qualified_column)
         case ast.BinOp() if e.op == "div":
             return safe_div(compile_expr(e.left, defined), compile_expr(e.right, defined))
         case ast.BinOp():

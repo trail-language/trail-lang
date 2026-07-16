@@ -25,7 +25,7 @@ class DepReport:
 def _walk(node, acc: _Acc) -> None:
     match node:
         case ast.FieldRef():
-            acc.fields.add(node.column)
+            acc.fields.add(node.qualified_column)  # frequency-qualified so the loader sees the freq
             if node.source:
                 acc.pins.add((node.column, node.source))
         case ast.NameRef():

@@ -14,14 +14,27 @@ class NameRef:
     name: str
 
 
+# frequency ladder, coarse -> fine; the single source of truth shared by the parser, the
+# loader's frequency split, and align's canonicalization/ordering.
+FREQUENCIES = ("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute")
+_FREQUENCIES = frozenset(FREQUENCIES)
+
+
 @dataclass(frozen=True)
 class FieldRef:
-    path: tuple[str, ...]
-    source: str | None = None
+    path: tuple[str, ...]         # canonical path, any frequency prefix already stripped
+    source: str | None = None     # `@ source` pin
+    frequency: str | None = None  # native-frequency qualifier (annual.income.revenue)
 
     @property
     def column(self) -> str:
+        """Canonical dotted field - what schema, validation, and kind lookup use."""
         return ".".join(self.path)
+
+    @property
+    def qualified_column(self) -> str:
+        """Physical panel/polars column name (frequency-prefixed when qualified)."""
+        return f"{self.frequency}.{self.column}" if self.frequency else self.column
 
 
 @dataclass(frozen=True)

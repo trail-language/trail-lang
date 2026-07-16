@@ -30,6 +30,15 @@ FREQ_DUR = {
     "weekly": "1w", "daily": "1d", "hourly": "1h", "minute": "1m",
 }
 
+# default downsample aggregation per field kind - the automatic rule of reference §4.4.
+# The single source of truth shared by cross-source alignment and the to_* sugar.
+AGG_FOR_KIND = {
+    "flow": "sum", "per_share": "sum",
+    "rate": "mean", "ratio": "mean",
+    "return": "compound",
+    "stock": "last", "level": "last", "price": "last", "index": "last", "meta": "last",
+}
+
 # the aggregation library: a bucket reduction (list of values -> one value)
 _AGG = {
     "sum": lambda e: e.sum(),
@@ -69,6 +78,8 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
             return getattr(a[0], base)(window_size=n, min_samples=n).over(ENTITY)
         case "resample":  # downsample to `freq`, reduce each bucket by `agg`, broadcast back to the grid
             return _AGG[a[2]](a[0]).over([pl.col(ENTITY), pl.col(TIME).dt.truncate(FREQ_DUR[a[1]])])
+        case "asof":  # force last-known alignment: carry each value forward over gaps, per entity
+            return a[0].forward_fill().over(ENTITY)
         case "roll_quantile":
             n = int(a[1])
             return a[0].rolling_quantile(quantile=float(a[2]), window_size=n, min_samples=n).over(ENTITY)

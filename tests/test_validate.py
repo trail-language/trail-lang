@@ -18,6 +18,22 @@ def test_arity():
     assert "E-FUNC-ARITY" in codes("model m { a = lag(income.revenue) }")  # lag needs 2 args
 
 
+def test_unknown_aggregation_errors():
+    assert "E-AGG-UNKNOWN" in codes('model m { a = resample(income.revenue, "annual", "avg") }')
+    assert "E-AGG-UNKNOWN" in codes('model m { a = to_annual(income.revenue, "avg") }')
+    assert "E-AGG-UNKNOWN" in codes('model m { a = to_annual(income.revenue, 3) }')  # non-string agg
+
+
+def test_unknown_frequency_errors():
+    assert "E-FREQ-UNKNOWN" in codes('model m { a = resample(income.revenue, "yearly", "sum") }')
+
+
+def test_valid_freq_and_agg_pass():
+    assert "E-AGG-UNKNOWN" not in codes('model m { a = resample(income.revenue, "annual", "sum") }')
+    assert "E-FREQ-UNKNOWN" not in codes('model m { a = resample(income.revenue, "annual", "sum") }')
+    assert "E-AGG-UNKNOWN" not in codes('model m { a = to_annual(income.revenue, "mean") }')
+
+
 def test_undefined_name():
     assert "E-NAME-UNDEFINED" in codes("model m { a = b + 1 }")
     assert codes("model m { b = 1\n a = b + 1 }") == []

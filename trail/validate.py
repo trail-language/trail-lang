@@ -4,7 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from trail import ast
+from trail.ops import _AGG, FREQ_DUR
 from trail.schema import is_field, kind_of
+
+_AGG_NAMES = frozenset(_AGG)
+_FREQ_NAMES = frozenset(FREQ_DUR)
+_TO_FUNCS = frozenset({"to_annual", "to_quarterly", "to_monthly", "to_daily"})
 
 # name -> (min_args, max_args) counting positional args only; kwargs checked by name.
 KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
@@ -12,6 +17,8 @@ KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
     "roll_var": (2, 2), "roll_max": (2, 2), "roll_min": (2, 2), "roll_quantile": (3, 3),
     "roll_median": (2, 2), "roll_skew": (2, 2),
     "ewm_mean": (2, 2), "ewm_std": (2, 2), "decay_linear": (2, 2), "resample": (3, 3),
+    "asof": (1, 1),
+    "to_annual": (1, 2), "to_quarterly": (1, 2), "to_monthly": (1, 2), "to_daily": (1, 2),
     "cummax": (1, 1), "cumsum": (1, 1), "cumprod": (1, 1), "cummin": (1, 1),
     "zscore": (1, 1), "rank": (1, 1), "winsorize": (2, 2),
     "xs_mean": (1, 1), "xs_median": (1, 1), "xs_sum": (1, 1), "xs_frac": (1, 1),
@@ -33,6 +40,25 @@ class Issue:
 
 def _kind(e) -> str | None:
     return kind_of(e.column) if isinstance(e, ast.FieldRef) else None
+
+
+def _check_agg(agg: ast.Expr, out: list[Issue]) -> None:
+    """A literal aggregation name must be one the engine knows (catches typos and non-strings)."""
+    if isinstance(agg, ast.Literal) and agg.value not in _AGG_NAMES:
+        out.append(Issue("error", "E-AGG-UNKNOWN",
+                         f"unknown aggregation {agg.value!r}; expected one of {sorted(_AGG_NAMES)}"))
+
+
+def _check_freq_agg(e: ast.Call, out: list[Issue]) -> None:
+    """resample(x, freq, agg) / to_<freq>(x[, agg]): validate literal freq and agg names."""
+    if e.name == "resample" and len(e.args) == 3:
+        freq = e.args[1]
+        if isinstance(freq, ast.Literal) and freq.value not in _FREQ_NAMES:
+            out.append(Issue("error", "E-FREQ-UNKNOWN",
+                             f"unknown frequency {freq.value!r}; expected one of {sorted(_FREQ_NAMES)}"))
+        _check_agg(e.args[2], out)
+    elif e.name in _TO_FUNCS and len(e.args) == 2:
+        _check_agg(e.args[1], out)
 
 
 def _lint_stock_flow(e: ast.BinOp, out: list[Issue]) -> None:
@@ -62,6 +88,7 @@ def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
                 if not (lo <= len(e.args) <= hi):
                     out.append(Issue("error", "E-FUNC-ARITY",
                                      f"{e.name} takes {lo}..{hi} args, got {len(e.args)}"))
+                _check_freq_agg(e, out)
             for a in e.args:
                 _check_expr(a, defined, out)
             for _, v in e.kwargs:

@@ -19,7 +19,9 @@ from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest,
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
-from trail.source import TIME_COL, ENTITY_COL, DataSource, SupportsCapabilities, SupportsDiscovery
+from trail.source import (
+    BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, SupportsCapabilities, SupportsDiscovery,
+)
 
 __all__ = [
     "FixtureSource",
@@ -186,6 +188,20 @@ def _split_freq(qualified: str) -> tuple[str | None, str]:
     return None, qualified
 
 
+def _split_pin(field: str) -> tuple[str, str | None]:
+    """(base, entity | None) from a possibly entity-pinned field string (x@SPY -> x, SPY)."""
+    base, sep, ent = field.partition("@")
+    return base, (ent if sep else None)
+
+
+def _parse_field(field: str) -> tuple[str | None, str, str, str | None]:
+    """(frequency | None, canonical, final_column, entity | None) for a requested field.
+    `final_column` is the exact name the compiler reads (bare, freq-qualified, or pinned)."""
+    base, ent = _split_pin(field)
+    fq, canon = _split_freq(base)
+    return fq, canon, field, ent
+
+
 def _source_freqs(src) -> tuple[str, ...]:
     """Every frequency a source can serve (its default when it declares no explicit set)."""
     if not isinstance(src, SupportsCapabilities):
@@ -238,11 +254,18 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     """
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical).
-    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(f) for f in fields})
+    bases = {_split_pin(f)[0] for f in fields}
+    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(b) for b in bases})
                if d in _DIM_MAP_COL}
-    # each request is (frequency | None, canonical, final_column); final_column is the
-    # frequency-qualified name the compiler reads (bare == canonical). Deduped.
-    pending = list({(*_split_freq(f), f) for f in fields} | {(None, b, b) for b in bridges})
+    # each request is (frequency | None, canonical, final_column, pin_entity | None);
+    # final_column is the exact name the compiler reads. Deduped.
+    requests = {_parse_field(f) for f in fields}
+    pending = list(requests | {(None, b, b, None) for b in bridges})
+    # an entity pin may reference an entity outside the model universe (a benchmark index,
+    # another country): widen an explicit fetch scope to include it.
+    pin_entities = {r[3] for r in requests if r[3]}
+    if entities is not None and pin_entities:
+        entities = sorted(set(entities) | pin_entities)
 
     loaded: list[tuple[pl.DataFrame, str, str]] = []
     for sname in _source_order(config):
@@ -256,11 +279,11 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
                 continue
             pending = [r for r in pending if r not in claimed]
             # one fetch per distinct frequency; a bare request fetches the source's default.
-            by_fetch: dict[str, list[tuple[str, str]]] = {}
-            for fq, canon, final in claimed:
-                by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final))
-            for fetch, aliases in by_fetch.items():
-                take = {c for c, _ in aliases}
+            by_fetch: dict[str, list[tuple[str, str, str | None]]] = {}
+            for fq, canon, final, ent in claimed:
+                by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final, ent))
+            for fetch, items in by_fetch.items():
+                take = {c for c, _, _ in items}
                 kw = {"periods": config.periods}
                 # scope by the entity universe only for entity-keyed sources that opt in
                 if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
@@ -274,12 +297,29 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
                     )
                 panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
                 # project canonical -> final columns; one fetch feeds bare + qualified aliases
-                proj = [pl.col(c).alias(fin) for c, fin in sorted(aliases, key=lambda a: a[1])]
-                loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
+                regular = [(c, fin) for c, fin, ent in items if ent is None]
+                if regular:
+                    proj = [pl.col(c).alias(fin) for c, fin in sorted(regular, key=lambda a: a[1])]
+                    loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
+                # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
+                # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the
+                # grid (as-of, kind-aware, PIT-safe) exactly like a global series.
+                for canon, final, ent in items:
+                    if ent is None:
+                        continue
+                    sl = panel.filter(pl.col(ENTITY_COL) == ent)
+                    if sl.height == 0:
+                        raise ConfigError(
+                            f"E-ENTITY-UNKNOWN entity '{ent}' has no rows for '{canon}' from "
+                            f"source '{sname}'; add it to the source's fetch scope"
+                        )
+                    pin_panel = (sl.select([TIME_COL, pl.col(canon).alias(final)])
+                                 .with_columns(pl.lit(BROADCAST_ENTITY).alias(ENTITY_COL)))
+                    loaded.append((pin_panel, fetch, "entity"))
         finally:
             src.close()
 
-    for fq, canon, final in pending:  # requests no configured source can serve
+    for fq, canon, final, _ent in pending:  # requests no configured source can serve
         if fq is not None:
             raise ConfigError(f"E-FREQ-UNAVAILABLE no configured source provides '{canon}' at frequency '{fq}'")
         if final not in bridges:  # an unserved injected bridge gets align's E-DIM-UNMAPPED instead

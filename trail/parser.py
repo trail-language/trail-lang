@@ -73,6 +73,15 @@ class _T(Transformer):
         node, src = s
         return ast.FieldRef(node.path, source=src.value, frequency=node.frequency)
 
+    def entity_pinned(self, s):
+        # atom "@" NAME "(" STRING ")" - the general selector form; only entity(...) exists.
+        node, selector, arg = s
+        if selector.value != "entity":
+            raise ValueError(f"unknown pin selector '{selector.value}(...)'; expected entity(\"...\")")
+        if not isinstance(node, ast.FieldRef):
+            raise ValueError("@ entity(...) pins a schema field reference, not an expression")
+        return ast.FieldRef(node.path, frequency=node.frequency, entity=arg.value[1:-1])
+
     def neg(self, s):
         return ast.Neg(s[0])
 

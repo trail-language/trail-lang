@@ -27,6 +27,19 @@ def test_run_prints_exports(tmp_path):
     assert res.exit_code == 0 and "margin" in res.output
 
 
+def test_run_ignores_unbound_universe_fields(tmp_path):
+    # u2 references a frequency the fixture can't serve; model m binds u1 via `on`,
+    # so u2's fields must not enter the load plan
+    f = tmp_path / "unis.trail"
+    f.write_text(
+        "universe u1 = stocks where meta.is_active\n"
+        "universe u2 = stocks where quarterly.income.revenue > 0\n"
+        "model m on u1 { export margin = income.operating_income / income.revenue }\n"
+    )
+    res = CliRunner().invoke(main, ["run", str(f), "--model", "m"])
+    assert res.exit_code == 0 and "margin" in res.output
+
+
 def test_run_ignores_unserved_frequency_in_another_model(tmp_path):
     # model n references quarterly.* (unservable by the annual fixture); running m must not abort
     f = tmp_path / "multi.trail"

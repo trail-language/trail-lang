@@ -130,27 +130,24 @@ def _source_dim(src) -> str:
     return src.capabilities().entity_dim if isinstance(src, SupportsCapabilities) else "entity"
 
 
-def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]]) -> set[str]:
+def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]], get_src) -> set[str]:
     """Entity dimensions (!= 'entity') required because a requested `(frequency, canonical)` is
     routed to a provider keyed by a coarser dimension (a country-keyed macro source). Uses the
     SAME claim predicate as the load loop (frequency-aware), so bridge detection matches routing;
-    each such dimension needs its bridge meta field loaded so align can remap it onto entities."""
+    each such dimension needs its bridge meta field loaded so align can remap it onto entities.
+    `get_src` shares constructed source instances with the load loop (one construction per run)."""
     dims: set[str] = set()
     pending = set(requests)
     for sname in _source_order(config):
         if not pending:
             break
-        spec = config.sources[sname]
-        src = resolve_driver(spec.driver)(spec.options)
-        try:
-            claimed = set(_claimable(src, pending))
-            if not claimed:
-                continue
-            pending -= claimed
-            if _source_dim(src) != "entity":
-                dims.add(_source_dim(src))
-        finally:
-            src.close()
+        src = get_src(sname)
+        claimed = set(_claimable(src, pending))
+        if not claimed:
+            continue
+        pending -= claimed
+        if _source_dim(src) != "entity":
+            dims.add(_source_dim(src))
     return dims
 
 
@@ -252,10 +249,30 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     passed only to sources that opt in (see :func:`_accepts_entities`), else ignored. A lone
     source with no explicit target is used at its native frequency.
     """
+    # sources are constructed once per run and shared by the bridge pre-scan and the load
+    # loop (adapters may open sessions or set identities in __init__); all closed at the end.
+    _srcs: dict[str, DataSource] = {}
+
+    def _get_src(sname: str) -> DataSource:
+        if sname not in _srcs:
+            spec = config.sources[sname]
+            _srcs[sname] = resolve_driver(spec.driver)(spec.options)
+        return _srcs[sname]
+
+    try:
+        return _load_panel(config, fields, target_freq, entities, _get_src)
+    finally:
+        for s in _srcs.values():
+            s.close()
+
+
+def _load_panel(config: Config, fields: set[str], target_freq: str | None,
+                entities: list[str] | None, _get_src) -> pl.DataFrame:
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical).
     bases = {_split_pin(f)[0] for f in fields}
-    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(b) for b in bases})
+    bridges = {_DIM_MAP_COL[d]
+               for d in _foreign_dims_for(config, {_split_freq(b) for b in bases}, _get_src)
                if d in _DIM_MAP_COL}
     # each request is (frequency | None, canonical, final_column, pin_entity | None);
     # final_column is the exact name the compiler reads. Deduped.
@@ -271,53 +288,49 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     for sname in _source_order(config):
         if not pending:
             break
-        spec = config.sources[sname]
-        src = resolve_driver(spec.driver)(spec.options)
-        try:
-            claimed = _claimable(src, pending)
-            if not claimed:
-                continue
-            pending = [r for r in pending if r not in claimed]
-            # one fetch per distinct frequency; a bare request fetches the source's default.
-            by_fetch: dict[str, list[tuple[str, str, str | None]]] = {}
-            for fq, canon, final, ent in claimed:
-                by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final, ent))
-            for fetch, items in by_fetch.items():
-                take = {c for c, _, _ in items}
-                kw = {"periods": config.periods}
-                # scope by the entity universe only for entity-keyed sources that opt in
-                if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
-                    kw["entities"] = entities
-                if _accepts_frequency(type(src).load):
-                    kw["frequency"] = fetch
-                elif fetch != _source_freq(src):  # asked for a non-default freq it can't be told about
+        src = _get_src(sname)
+        claimed = _claimable(src, pending)
+        if not claimed:
+            continue
+        pending = [r for r in pending if r not in claimed]
+        # one fetch per distinct frequency; a bare request fetches the source's default.
+        by_fetch: dict[str, list[tuple[str, str, str | None]]] = {}
+        for fq, canon, final, ent in claimed:
+            by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final, ent))
+        for fetch, items in by_fetch.items():
+            take = {c for c, _, _ in items}
+            kw = {"periods": config.periods}
+            # scope by the entity universe only for entity-keyed sources that opt in
+            if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
+                kw["entities"] = entities
+            if _accepts_frequency(type(src).load):
+                kw["frequency"] = fetch
+            elif fetch != _source_freq(src):  # asked for a non-default freq it can't be told about
+                raise ConfigError(
+                    f"E-FREQ-UNWIRED source '{sname}' advertises frequency '{fetch}' but its "
+                    "load() takes no frequency= argument, so it cannot serve it"
+                )
+            panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
+            # project canonical -> final columns; one fetch feeds bare + qualified aliases
+            regular = [(c, fin) for c, fin, ent in items if ent is None]
+            if regular:
+                proj = [pl.col(c).alias(fin) for c, fin in sorted(regular, key=lambda a: a[1])]
+                loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
+            # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
+            # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the
+            # grid (as-of, kind-aware, PIT-safe) exactly like a global series.
+            for canon, final, ent in items:
+                if ent is None:
+                    continue
+                sl = panel.filter(pl.col(ENTITY_COL) == ent)
+                if sl.height == 0:
                     raise ConfigError(
-                        f"E-FREQ-UNWIRED source '{sname}' advertises frequency '{fetch}' but its "
-                        "load() takes no frequency= argument, so it cannot serve it"
+                        f"E-ENTITY-UNKNOWN entity '{ent}' has no rows for '{canon}' from "
+                        f"source '{sname}'; add it to the source's fetch scope"
                     )
-                panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
-                # project canonical -> final columns; one fetch feeds bare + qualified aliases
-                regular = [(c, fin) for c, fin, ent in items if ent is None]
-                if regular:
-                    proj = [pl.col(c).alias(fin) for c, fin in sorted(regular, key=lambda a: a[1])]
-                    loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
-                # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
-                # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the
-                # grid (as-of, kind-aware, PIT-safe) exactly like a global series.
-                for canon, final, ent in items:
-                    if ent is None:
-                        continue
-                    sl = panel.filter(pl.col(ENTITY_COL) == ent)
-                    if sl.height == 0:
-                        raise ConfigError(
-                            f"E-ENTITY-UNKNOWN entity '{ent}' has no rows for '{canon}' from "
-                            f"source '{sname}'; add it to the source's fetch scope"
-                        )
-                    pin_panel = (sl.select([TIME_COL, pl.col(canon).alias(final)])
-                                 .with_columns(pl.lit(BROADCAST_ENTITY).alias(ENTITY_COL)))
-                    loaded.append((pin_panel, fetch, "entity"))
-        finally:
-            src.close()
+                pin_panel = (sl.select([TIME_COL, pl.col(canon).alias(final)])
+                             .with_columns(pl.lit(BROADCAST_ENTITY).alias(ENTITY_COL)))
+                loaded.append((pin_panel, fetch, "entity"))
 
     for fq, canon, final, _ent in pending:  # requests no configured source can serve
         if fq is not None:

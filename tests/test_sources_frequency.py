@@ -194,6 +194,31 @@ class _CountryDual(ExtendedDataSource):
         return Capabilities(frequency="annual", frequencies=("annual", "quarterly"), entity_dim="country")
 
 
+def test_sources_constructed_once_per_run(monkeypatch):
+    # the bridge pre-scan and the load loop share instances; construction (which may open
+    # sessions or set identities) must happen once per source per run
+    counts = {"ent": 0, "ctry": 0}
+
+    class _Ent(_EntityAnnual):
+        def __init__(self, options=None):
+            counts["ent"] += 1
+            super().__init__(options)
+
+    class _Ctry(_CountryDual):
+        def __init__(self, options=None):
+            counts["ctry"] += 1
+            super().__init__(options)
+
+    drivers = {"ent": _Ent, "ctry": _Ctry}
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: drivers[ref])
+    cfg = Config(
+        sources={"ent": SourceSpec("ent", "ent"), "ctry": SourceSpec("ctry", "ctry")},
+        precedence={"default": ["ent", "ctry"]},
+    )
+    sources.load_panel_for(cfg, {"income.revenue", "quarterly.income.revenue"}, target_freq="quarterly")
+    assert counts == {"ent": 1, "ctry": 1}
+
+
 def test_qualified_field_routed_to_country_source_injects_bridge(monkeypatch):
     # bare income.revenue -> entity source (annual); quarterly.income.revenue -> the country source
     # (quarterly). Bridge detection must be frequency-aware so meta.country is auto-injected.

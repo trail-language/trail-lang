@@ -8,7 +8,9 @@ they are warned and coerced.
 """
 from __future__ import annotations
 
+import inspect
 import warnings
+from functools import lru_cache
 
 import polars as pl
 
@@ -121,6 +123,20 @@ def _source_freq(src) -> str:
     return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
 
 
+@lru_cache(maxsize=None)
+def _accepts_entities(load_func) -> bool:
+    """Whether a source's load() opts into the entity-scoping kwarg (a named `entities`
+    param or **kwargs). Detection means we never hand `entities=` to a source that would
+    raise TypeError on it - the ABC signature stays `load(self, fields, *, periods)`."""
+    try:
+        params = inspect.signature(load_func).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "entities" in params
+
+
 def _source_order(config: Config) -> list[str]:
     """Sources to try, precedence.default first, then any others (for field assignment)."""
     order = list(config.precedence.get("default", []))
@@ -128,11 +144,14 @@ def _source_order(config: Config) -> list[str]:
     return order
 
 
-def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None) -> pl.DataFrame:
+def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
+                   entities: list[str] | None = None) -> pl.DataFrame:
     """Load the configured sources, assign each requested field to its first provider
     (precedence), align every source panel to the target frequency, and merge on
     ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
-    referenced). A lone source with no explicit target is used at its native frequency.
+    referenced). `entities` is the candidate entity universe to scope the fetch to; it is
+    passed only to sources that opt in (see :func:`_accepts_entities`), else ignored. A lone
+    source with no explicit target is used at its native frequency.
     """
     remaining = set(fields)
     loaded: list[tuple[pl.DataFrame, str]] = []
@@ -145,7 +164,10 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
             take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
             if not take:
                 continue
-            panel = conform_panel(src.load(take, periods=config.periods), take,
+            kw = {"periods": config.periods}
+            if entities is not None and _accepts_entities(type(src).load):
+                kw["entities"] = entities
+            panel = conform_panel(src.load(take, **kw), take,
                                   strict=config.strict, source_name=sname)
             panel = panel.select([ENTITY_COL, TIME_COL, *sorted(take)])  # disjoint field set
             loaded.append((panel, _source_freq(src)))

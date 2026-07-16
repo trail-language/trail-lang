@@ -37,7 +37,13 @@ class _T(Transformer):
     # --- references ---
     def ref(self, parts):
         names = tuple(p.value for p in parts)
-        return ast.NameRef(names[0]) if len(names) == 1 else ast.FieldRef(names)
+        if len(names) == 1:
+            return ast.NameRef(names[0])
+        # a known frequency leading a 3+-part path is a qualifier (annual.income.revenue);
+        # purely syntactic, so a 2-part daily.price is never mis-split.
+        if len(names) >= 3 and names[0] in ast._FREQUENCIES:
+            return ast.FieldRef(names[1:], frequency=names[0])
+        return ast.FieldRef(names)
 
     def dotted(self, parts):
         return tuple(p.value for p in parts)
@@ -65,7 +71,7 @@ class _T(Transformer):
     # --- operators ---
     def pinned(self, s):
         node, src = s
-        return ast.FieldRef(node.path, source=src.value)
+        return ast.FieldRef(node.path, source=src.value, frequency=node.frequency)
 
     def neg(self, s):
         return ast.Neg(s[0])

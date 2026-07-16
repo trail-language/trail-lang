@@ -14,6 +14,7 @@ from functools import lru_cache
 
 import polars as pl
 
+from trail.ast import _FREQUENCIES
 from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest, is_broadcast
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
@@ -171,6 +172,35 @@ def _source_order(config: Config) -> list[str]:
     return order
 
 
+def _split_freq(qualified: str) -> tuple[str | None, str]:
+    """(frequency | None, canonical) from a possibly frequency-qualified field string.
+    Mirrors the parser: a known frequency leading a 3+-part path is the qualifier."""
+    head, _, rest = qualified.partition(".")
+    if head in _FREQUENCIES and rest.count(".") >= 1:
+        return head, rest
+    return None, qualified
+
+
+def _source_freqs(src) -> tuple[str, ...]:
+    """Every frequency a source can serve (its default when it declares no explicit set)."""
+    if not isinstance(src, SupportsCapabilities):
+        return ("annual",)
+    caps = src.capabilities()
+    return caps.frequencies or (caps.frequency,)
+
+
+@lru_cache(maxsize=None)
+def _accepts_frequency(load_func) -> bool:
+    """Whether a source's load() opts into the frequency kwarg (named `frequency` or **kwargs)."""
+    try:
+        params = inspect.signature(load_func).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "frequency" in params
+
+
 def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
                    entities: list[str] | None = None) -> pl.DataFrame:
     """Load the configured sources, assign each requested field to its first provider
@@ -181,32 +211,49 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     source with no explicit target is used at its native frequency.
     """
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
-    # loaded too, even though the model never names it - inject it into the load plan.
-    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, fields) if d in _DIM_MAP_COL}
-    remaining = set(fields) | bridges
+    # loaded too, even though the model never names it - inject it (bare, canonical).
+    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(f)[1] for f in fields})
+               if d in _DIM_MAP_COL}
+    # each request is (frequency | None, canonical, final_column); final_column is the
+    # frequency-qualified name the compiler reads (bare == canonical). Deduped.
+    pending = list({(*_split_freq(f), f) for f in fields} | {(None, b, b) for b in bridges})
+
     loaded: list[tuple[pl.DataFrame, str, str]] = []
     for sname in _source_order(config):
-        if not remaining:
+        if not pending:
             break
         spec = config.sources[sname]
         src = resolve_driver(spec.driver)(spec.options)
         try:
-            take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
-            if not take:
+            avail = src.available_fields() if isinstance(src, SupportsDiscovery) else None
+            sfreqs = _source_freqs(src)
+            claimed = [(fq, canon, final) for (fq, canon, final) in pending
+                       if (avail is None or canon in avail) and (fq is None or fq in sfreqs)]
+            if not claimed:
                 continue
-            kw = {"periods": config.periods}
-            # only scope by the entity universe when the source is keyed by that dimension - a
-            # country-keyed source must not be handed stock tickers as its fetch scope.
-            if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
-                kw["entities"] = entities
-            panel = conform_panel(src.load(take, **kw), take,
-                                  strict=config.strict, source_name=sname)
-            panel = panel.select([ENTITY_COL, TIME_COL, *sorted(take)])  # disjoint field set
-            loaded.append((panel, _source_freq(src), _source_dim(src)))
-            remaining -= take
+            pending = [r for r in pending if r not in claimed]
+            # one fetch per distinct frequency; a bare request fetches the source's default.
+            by_fetch: dict[str, list[tuple[str, str]]] = {}
+            for fq, canon, final in claimed:
+                by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final))
+            for fetch, aliases in by_fetch.items():
+                take = {c for c, _ in aliases}
+                kw = {"periods": config.periods}
+                # scope by the entity universe only for entity-keyed sources that opt in
+                if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
+                    kw["entities"] = entities
+                if _accepts_frequency(type(src).load):
+                    kw["frequency"] = fetch
+                panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
+                # project canonical -> final columns; one fetch feeds bare + qualified aliases
+                proj = [pl.col(c).alias(fin) for c, fin in sorted(aliases, key=lambda a: a[1])]
+                loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
         finally:
             src.close()
 
+    for fq, canon, _ in pending:  # a qualified request no source can serve at that frequency
+        if fq is not None:
+            raise ConfigError(f"E-FREQ-UNAVAILABLE no configured source provides '{canon}' at frequency '{fq}'")
     if not loaded:
         raise ConfigError("E-SOURCE-EMPTY no configured source provides the requested fields")
 

@@ -1,5 +1,4 @@
 """Regressions for the overnight architecture review's verified P1s."""
-import polars as pl
 
 from trail import ast
 from trail.compiler import compile_model

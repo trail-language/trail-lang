@@ -17,6 +17,12 @@ def macro_plugin(monkeypatch):
                         lambda: {"macro.risk_free": FieldSpec("macro.risk_free", "rate")})
 
 
+@pytest.fixture
+def gmd_plugin(monkeypatch):
+    monkeypatch.setattr(schema, "_plugin_fields",
+                        lambda: {"gmd.gdp": FieldSpec("gmd.gdp", "level")})
+
+
 class _PxSource(ExtendedDataSource):
     def load(self, fields, *, periods=None):
         return pl.DataFrame({
@@ -149,3 +155,61 @@ def test_load_panel_for_broadcasts_global_macro_onto_every_stock(macro_plugin, m
     assert set(panel["entity"].to_list()) == {"AAA", "BBB"}
     assert panel["macro.risk_free"].to_list() == [0.02, 0.02, 0.02, 0.02]  # broadcast to every stock/day
     assert panel["price.adj_close"].to_list() == [10.0, 11.0, 20.0, 21.0]
+
+
+class _StockSource(ExtendedDataSource):
+    def load(self, fields, *, periods=None):
+        cols = {"entity": ["AAA", "BBB"], "time": [dt.datetime(2022, 12, 31)] * 2}
+        if "income.net_income" in fields:
+            cols["income.net_income"] = [10.0, 20.0]
+        if "meta.country" in fields:
+            cols["meta.country"] = ["USA", "CAN"]
+        return pl.DataFrame(cols).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"income.net_income", "meta.country"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["AAA", "BBB"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual")
+
+
+class _CountryMacroSource(ExtendedDataSource):
+    def load(self, fields, *, periods=None):
+        return pl.DataFrame({
+            "entity": ["USA", "CAN"], "time": [dt.datetime(2022, 12, 31)] * 2, "gmd.gdp": [1000.0, 500.0],
+        }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"gmd.gdp"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["USA", "CAN"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual", entity_dim="country")
+
+
+def test_load_panel_for_remaps_country_macro_onto_stocks(gmd_plugin, monkeypatch):
+    # the model references income.net_income + gmd.gdp but NOT meta.country; the bridge is
+    # auto-injected so the country source can be remapped onto each stock.
+    drivers = {"stock-drv": _StockSource, "gmd-drv": _CountryMacroSource}
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: drivers[ref])
+    cfg = Config(
+        sources={"stock": SourceSpec("stock", "stock-drv"), "gmd": SourceSpec("gmd", "gmd-drv")},
+        precedence={"default": ["stock", "gmd"]},
+    )
+    panel = sources.load_panel_for(cfg, {"income.net_income", "gmd.gdp"}, target_freq="annual")
+    d = {r["entity"]: r for r in panel.iter_rows(named=True)}
+    assert d["AAA"]["gmd.gdp"] == 1000.0  # AAA -> USA
+    assert d["BBB"]["gmd.gdp"] == 500.0   # BBB -> CAN
+    assert d["AAA"]["income.net_income"] == 10.0
+    assert set(panel["entity"].to_list()) == {"AAA", "BBB"}

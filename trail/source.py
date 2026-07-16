@@ -79,6 +79,10 @@ class Capabilities:
     forms: tuple[str, ...] = field(default_factory=tuple)
     provides_meta: bool = False
     provenance: str = ""
+    #: the dimension the source's `entity` column denotes. "entity" (default) = the canonical
+    #: grid entity; a coarser dimension (e.g. "country") is remapped onto entities at align time
+    #: via a bridge meta field. See trail.align.
+    entity_dim: str = "entity"
 
 
 @runtime_checkable

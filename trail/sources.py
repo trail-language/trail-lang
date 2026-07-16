@@ -14,7 +14,7 @@ from functools import lru_cache
 
 import polars as pl
 
-from trail.align import AlignmentWarning, align_and_merge, finest, is_broadcast
+from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest, is_broadcast
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
@@ -123,6 +123,33 @@ def _source_freq(src) -> str:
     return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
 
 
+def _source_dim(src) -> str:
+    return src.capabilities().entity_dim if isinstance(src, SupportsCapabilities) else "entity"
+
+
+def _foreign_dims_for(config: Config, fields: set[str]) -> set[str]:
+    """Entity dimensions (!= 'entity') required because a requested field's assigned provider
+    is keyed by a coarser dimension (e.g. a country-keyed macro source). Each such dimension
+    needs its bridge meta field loaded so the align engine can remap it onto entities."""
+    dims: set[str] = set()
+    remaining = set(fields)
+    for sname in _source_order(config):
+        if not remaining:
+            break
+        spec = config.sources[sname]
+        src = resolve_driver(spec.driver)(spec.options)
+        try:
+            take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
+            if not take:
+                continue
+            if _source_dim(src) != "entity":
+                dims.add(_source_dim(src))
+            remaining -= take
+        finally:
+            src.close()
+    return dims
+
+
 @lru_cache(maxsize=None)
 def _accepts_entities(load_func) -> bool:
     """Whether a source's load() opts into the entity-scoping kwarg (a named `entities`
@@ -153,8 +180,11 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     passed only to sources that opt in (see :func:`_accepts_entities`), else ignored. A lone
     source with no explicit target is used at its native frequency.
     """
-    remaining = set(fields)
-    loaded: list[tuple[pl.DataFrame, str]] = []
+    # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
+    # loaded too, even though the model never names it - inject it into the load plan.
+    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, fields) if d in _DIM_MAP_COL}
+    remaining = set(fields) | bridges
+    loaded: list[tuple[pl.DataFrame, str, str]] = []
     for sname in _source_order(config):
         if not remaining:
             break
@@ -170,7 +200,7 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
             panel = conform_panel(src.load(take, **kw), take,
                                   strict=config.strict, source_name=sname)
             panel = panel.select([ENTITY_COL, TIME_COL, *sorted(take)])  # disjoint field set
-            loaded.append((panel, _source_freq(src)))
+            loaded.append((panel, _source_freq(src), _source_dim(src)))
             remaining -= take
         finally:
             src.close()
@@ -181,7 +211,7 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     if len(loaded) == 1 and target_freq is None and not is_broadcast(loaded[0][0]):
         panel = loaded[0][0]
     else:  # a lone broadcast source routes here too, so align_and_merge can reject it clearly
-        panel = align_and_merge(loaded, target_freq or finest([f for _, f in loaded]))
+        panel = align_and_merge(loaded, target_freq or finest([f for _, f, _ in loaded]))
 
     if config.periods is not None:
         lo, hi = config.periods

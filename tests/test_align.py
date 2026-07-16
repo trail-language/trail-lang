@@ -16,6 +16,12 @@ def macro_plugin(monkeypatch):
     monkeypatch.setattr(schema, "_plugin_fields",
                         lambda: {"macro.risk_free": FieldSpec("macro.risk_free", "rate")})
 
+
+@pytest.fixture
+def gmd_plugin(monkeypatch):
+    monkeypatch.setattr(schema, "_plugin_fields",
+                        lambda: {"gmd.gdp": FieldSpec("gmd.gdp", "level")})
+
 _Q = [
     dt.datetime(2022, 3, 31), dt.datetime(2022, 6, 30), dt.datetime(2022, 9, 30), dt.datetime(2022, 12, 31),
     dt.datetime(2023, 3, 31), dt.datetime(2023, 6, 30), dt.datetime(2023, 9, 30), dt.datetime(2023, 12, 31),
@@ -126,6 +132,53 @@ def test_global_series_broadcasts_across_every_grid_entity(macro_plugin, recwarn
     assert out["macro.risk_free"].to_list() == [0.02, 0.02, 0.02, 0.02]
     assert out["price.adj_close"].to_list() == [10.0, 11.0, 20.0, 21.0]
     assert not [w for w in recwarn.list if issubclass(w.category, AlignmentWarning)]  # rate is safe
+
+
+_STOCKS = pl.DataFrame({
+    "entity": ["AAA", "BBB"], "time": [dt.datetime(2022, 12, 31)] * 2,
+    "income.net_income": [10.0, 20.0], "meta.country": ["USA", "CAN"],
+}).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+_GDP = pl.DataFrame({
+    "entity": ["USA", "CAN"], "time": [dt.datetime(2022, 12, 31)] * 2, "gmd.gdp": [1000.0, 500.0],
+}).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+
+def test_country_dim_remaps_onto_stocks_by_meta_country(gmd_plugin):
+    out = align_and_merge([(_STOCKS, "annual", "entity"), (_GDP, "annual", "country")], "annual")
+    d = {r["entity"]: r for r in out.iter_rows(named=True)}
+    assert d["AAA"]["gmd.gdp"] == 1000.0   # AAA is USA
+    assert d["BBB"]["gmd.gdp"] == 500.0    # BBB is CAN
+    assert d["AAA"]["income.net_income"] == 10.0
+    assert set(out["entity"].to_list()) == {"AAA", "BBB"}  # no country entity leaks
+
+
+def test_country_dim_missing_bridge_raises(gmd_plugin):
+    with pytest.raises(ConfigError, match="E-DIM-UNMAPPED"):
+        align_and_merge([(_STOCKS.drop("meta.country"), "annual", "entity"),
+                         (_GDP, "annual", "country")], "annual")
+
+
+def test_lone_country_source_is_its_own_entity_axis(gmd_plugin):
+    # no entity-keyed source: countries ARE the entities (a country model), not a remap
+    out = align_and_merge([(_GDP, "annual", "country")], "annual").sort("entity")
+    assert set(out["entity"].to_list()) == {"USA", "CAN"}
+    assert out.filter(pl.col("entity") == "USA")["gmd.gdp"].to_list() == [1000.0]
+
+
+def test_country_dim_annual_asof_onto_quarterly_stock_grid(gmd_plugin):
+    q = [dt.datetime(2022, 3, 31), dt.datetime(2022, 6, 30), dt.datetime(2022, 12, 31), dt.datetime(2023, 12, 31)]
+    stocks_q = pl.DataFrame({
+        "entity": ["AAA"] * 4, "time": q,
+        "income.net_income": [1.0, 2, 3, 4], "meta.country": ["USA"] * 4,
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    gdp = pl.DataFrame({
+        "entity": ["USA", "USA"], "time": [dt.datetime(2022, 12, 31), dt.datetime(2023, 12, 31)],
+        "gmd.gdp": [1000.0, 1100.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    out = align_and_merge([(stocks_q, "quarterly", "entity"), (gdp, "annual", "country")], "quarterly").sort("time")
+    # FY2022 GDP unknown until its year-end, then carried; FY2023 at 2023-12-31
+    assert out["gmd.gdp"].to_list() == [None, None, 1000.0, 1100.0]
 
 
 def test_broadcast_at_or_finer_than_target_aggregates_then_broadcasts(macro_plugin):

@@ -25,6 +25,7 @@ class FieldRef:
     path: tuple[str, ...]         # canonical path, any frequency prefix already stripped
     source: str | None = None     # `@ source` pin
     frequency: str | None = None  # native-frequency qualifier (annual.income.revenue)
+    entity: str | None = None     # `@ entity("SPY")` cross-entity pin (exclusive with source)
 
     @property
     def column(self) -> str:
@@ -33,8 +34,10 @@ class FieldRef:
 
     @property
     def qualified_column(self) -> str:
-        """Physical panel/polars column name (frequency-prefixed when qualified)."""
-        return f"{self.frequency}.{self.column}" if self.frequency else self.column
+        """Physical panel/polars column name: frequency-prefixed and entity-suffixed
+        when qualified (daily.price.adj_close@SPY)."""
+        base = f"{self.frequency}.{self.column}" if self.frequency else self.column
+        return f"{base}@{self.entity}" if self.entity else base
 
 
 @dataclass(frozen=True)

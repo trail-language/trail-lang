@@ -28,10 +28,11 @@ FREQ_ORDER = list(FREQUENCIES)
 
 
 def _canonical(col: str) -> str:
-    """Strip a frequency prefix from a physical column so kind lookup uses the canonical field
-    (annual.balance.total_assets -> balance.total_assets), else the column unchanged."""
-    head, _, rest = col.partition(".")
-    return rest if head in FREQ_ORDER and rest.count(".") >= 1 else col
+    """Strip the entity-pin suffix and frequency prefix from a physical column so kind lookup
+    uses the canonical field (daily.price.adj_close@SPY -> price.adj_close)."""
+    base = col.split("@", 1)[0]
+    head, _, rest = base.partition(".")
+    return rest if head in FREQ_ORDER and rest.count(".") >= 1 else base
 
 # kinds whose per-period value must not be repeated onto a finer grid (a total/return mis-scales).
 _UPSAMPLE_UNSAFE = {"flow", "return", "per_share"}

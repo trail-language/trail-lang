@@ -24,6 +24,37 @@ def _group(by: tuple[str, ...] | None) -> list[str]:
     return [TIME] + ([".".join(by)] if by else [])
 
 
+# frequency name -> polars truncate/duration string (the target bucket for resample)
+_FREQ_DUR = {
+    "annual": "1y", "quarterly": "1q", "monthly": "1mo",
+    "weekly": "1w", "daily": "1d", "hourly": "1h", "minute": "1m",
+}
+
+# the aggregation library: a bucket reduction (list of values -> one value)
+_AGG = {
+    "sum": lambda e: e.sum(),
+    "mean": lambda e: e.mean(),
+    "last": lambda e: e.last(),
+    "first": lambda e: e.first(),
+    "min": lambda e: e.min(),
+    "max": lambda e: e.max(),
+    "count": lambda e: e.count(),
+    "median": lambda e: e.median(),
+    "std": lambda e: e.std(),
+    "var": lambda e: e.var(),
+    "prod": lambda e: e.product(),
+    "compound": lambda e: (e + 1).product() - 1,
+    "geomean": lambda e: e.log().mean().exp(),
+    "range": lambda e: e.max() - e.min(),
+    "change": lambda e: e.last() - e.first(),
+}
+
+_ROLL = {
+    "roll_mean": "rolling_mean", "roll_sum": "rolling_sum", "roll_std": "rolling_std",
+    "roll_var": "rolling_var", "roll_max": "rolling_max", "roll_min": "rolling_min",
+}
+
+
 def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl.Expr:
     a = args
     match name:
@@ -31,12 +62,13 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
         case "lag":
             return a[0].shift(int(a[1])).over(ENTITY)
         case "roll_mean" | "roll_sum" | "roll_std" | "roll_var" | "roll_max" | "roll_min":
+            base = _ROLL[name]
+            if isinstance(a[1], str):  # duration window over the time axis (e.g. "1y", "90d")
+                return getattr(a[0], base + "_by")(pl.col(TIME), window_size=a[1]).over(ENTITY)
             n = int(a[1])
-            method = {
-                "roll_mean": "rolling_mean", "roll_sum": "rolling_sum", "roll_std": "rolling_std",
-                "roll_var": "rolling_var", "roll_max": "rolling_max", "roll_min": "rolling_min",
-            }[name]
-            return getattr(a[0], method)(window_size=n, min_samples=n).over(ENTITY)
+            return getattr(a[0], base)(window_size=n, min_samples=n).over(ENTITY)
+        case "resample":  # downsample to `freq`, reduce each bucket by `agg`, broadcast back to the grid
+            return _AGG[a[2]](a[0]).over([pl.col(ENTITY), pl.col(TIME).dt.truncate(_FREQ_DUR[a[1]])])
         case "roll_quantile":
             n = int(a[1])
             return a[0].rolling_quantile(quantile=float(a[2]), window_size=n, min_samples=n).over(ENTITY)

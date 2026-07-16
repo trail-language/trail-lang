@@ -11,7 +11,7 @@ KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
     "lag": (2, 2), "roll_mean": (2, 2), "roll_sum": (2, 2), "roll_std": (2, 2),
     "roll_var": (2, 2), "roll_max": (2, 2), "roll_min": (2, 2), "roll_quantile": (3, 3),
     "roll_median": (2, 2), "roll_skew": (2, 2),
-    "ewm_mean": (2, 2), "ewm_std": (2, 2), "decay_linear": (2, 2),
+    "ewm_mean": (2, 2), "ewm_std": (2, 2), "decay_linear": (2, 2), "resample": (3, 3),
     "cummax": (1, 1), "cumsum": (1, 1), "cumprod": (1, 1), "cummin": (1, 1),
     "zscore": (1, 1), "rank": (1, 1), "winsorize": (2, 2),
     "xs_mean": (1, 1), "xs_median": (1, 1), "xs_sum": (1, 1), "xs_frac": (1, 1),

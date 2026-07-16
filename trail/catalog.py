@@ -47,6 +47,7 @@ _FUNC_META: dict[str, tuple[str, str]] = {
     "ewm_mean": ("time-series", "exponentially-weighted mean (span)"),
     "ewm_std": ("time-series", "exponentially-weighted std (span)"),
     "decay_linear": ("time-series", "linearly-decayed weighted mean over n periods"),
+    "resample": ("time-series", "downsample to a frequency by an aggregation, broadcast back"),
     "zscore": ("cross-sectional", "standardize within (period[, group])"),
     "rank": ("cross-sectional", "average-tie rank, ascending, within group"),
     "winsorize": ("cross-sectional", "clip to [p, 1-p] group quantiles"),

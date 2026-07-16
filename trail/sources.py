@@ -128,24 +128,28 @@ def _source_dim(src) -> str:
     return src.capabilities().entity_dim if isinstance(src, SupportsCapabilities) else "entity"
 
 
-def _foreign_dims_for(config: Config, fields: set[str]) -> set[str]:
-    """Entity dimensions (!= 'entity') required because a requested field's assigned provider
-    is keyed by a coarser dimension (e.g. a country-keyed macro source). Each such dimension
-    needs its bridge meta field loaded so the align engine can remap it onto entities."""
+def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]]) -> set[str]:
+    """Entity dimensions (!= 'entity') required because a requested `(frequency, canonical)` is
+    routed to a provider keyed by a coarser dimension (a country-keyed macro source). Uses the
+    SAME claim predicate as the load loop (frequency-aware), so bridge detection matches routing;
+    each such dimension needs its bridge meta field loaded so align can remap it onto entities."""
     dims: set[str] = set()
-    remaining = set(fields)
+    pending = set(requests)
     for sname in _source_order(config):
-        if not remaining:
+        if not pending:
             break
         spec = config.sources[sname]
         src = resolve_driver(spec.driver)(spec.options)
         try:
-            take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
-            if not take:
+            avail = src.available_fields() if isinstance(src, SupportsDiscovery) else None
+            sfreqs = _source_freqs(src)
+            claimed = {(fq, canon) for (fq, canon) in pending
+                       if (avail is None or canon in avail) and (fq is None or fq in sfreqs)}
+            if not claimed:
                 continue
+            pending -= claimed
             if _source_dim(src) != "entity":
                 dims.add(_source_dim(src))
-            remaining -= take
         finally:
             src.close()
     return dims
@@ -212,7 +216,7 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     """
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical).
-    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(f)[1] for f in fields})
+    bridges = {_DIM_MAP_COL[d] for d in _foreign_dims_for(config, {_split_freq(f) for f in fields})
                if d in _DIM_MAP_COL}
     # each request is (frequency | None, canonical, final_column); final_column is the
     # frequency-qualified name the compiler reads (bare == canonical). Deduped.
@@ -244,6 +248,11 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
                     kw["entities"] = entities
                 if _accepts_frequency(type(src).load):
                     kw["frequency"] = fetch
+                elif fetch != _source_freq(src):  # asked for a non-default freq it can't be told about
+                    raise ConfigError(
+                        f"E-FREQ-UNWIRED source '{sname}' advertises frequency '{fetch}' but its "
+                        "load() takes no frequency= argument, so it cannot serve it"
+                    )
                 panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
                 # project canonical -> final columns; one fetch feeds bare + qualified aliases
                 proj = [pl.col(c).alias(fin) for c, fin in sorted(aliases, key=lambda a: a[1])]

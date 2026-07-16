@@ -14,8 +14,10 @@ class NameRef:
     name: str
 
 
-# frequency names that may qualify a field reference (annual.income.revenue).
-_FREQUENCIES = frozenset(("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute"))
+# frequency ladder, coarse -> fine; the single source of truth shared by the parser, the
+# loader's frequency split, and align's canonicalization/ordering.
+FREQUENCIES = ("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute")
+_FREQUENCIES = frozenset(FREQUENCIES)
 
 
 @dataclass(frozen=True)

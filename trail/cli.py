@@ -88,7 +88,11 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", PanelConformanceWarning)
             warnings.simplefilter("always", AlignmentWarning)
-            panel = load_panel_for(config, set(extract(program).fields),
+            # scope loading to the run model (+ shared universes): a stray field in another
+            # model in the same file must not abort this run (e.g. E-FREQ-UNAVAILABLE).
+            _unis = tuple(d for d in program.decls if isinstance(d, ast.UniverseDecl))
+            scoped = ast.Program(_unis + (models[model_name],))
+            panel = load_panel_for(config, set(extract(scoped).fields),
                                    target_freq=models[model_name].frequency)
         for w in caught:
             if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):

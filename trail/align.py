@@ -17,13 +17,14 @@ import warnings
 
 import polars as pl
 
+from trail.ast import FREQUENCIES
 from trail.config import ConfigError
 from trail.ops import _AGG, AGG_FOR_KIND, FREQ_DUR
 from trail.schema import kind_of
 from trail.source import BROADCAST_ENTITY, ENTITY_COL, TIME_COL
 
-# coarse -> fine
-FREQ_ORDER = ["annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute"]
+# coarse -> fine; shared with the parser/loader via trail.ast
+FREQ_ORDER = list(FREQUENCIES)
 
 
 def _canonical(col: str) -> str:

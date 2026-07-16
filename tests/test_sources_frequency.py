@@ -80,3 +80,92 @@ def test_legacy_single_frequency_source_still_bare_loads(monkeypatch):
     monkeypatch.setattr(sources, "resolve_driver", lambda ref: _LegacyAnnual)
     panel = sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
     assert panel.to_dicts()[0]["income.revenue"] == 7.0  # no frequency= handed to a legacy load
+
+
+class _MisWired(ExtendedDataSource):
+    """Declares two frequencies but load() takes no frequency= - cannot actually serve a non-default."""
+
+    def load(self, fields, *, periods=None):
+        return pl.DataFrame({"entity": ["AAA"], "time": [_T], "income.revenue": [100.0]}).with_columns(
+            pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"income.revenue"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["AAA"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual", frequencies=("annual", "quarterly"))
+
+
+def test_miswired_multifreq_source_raises_on_nondefault(monkeypatch):
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)
+    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
+        sources.load_panel_for(_cfg(), {"quarterly.income.revenue"}, target_freq="quarterly")
+
+
+def test_miswired_source_bare_default_still_works(monkeypatch):
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)  # default (annual) needs no kwarg
+    panel = sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
+    assert panel.to_dicts()[0]["income.revenue"] == 100.0
+
+
+class _EntityAnnual(ExtendedDataSource):
+    def load(self, fields, *, periods=None):
+        cols = {"entity": ["AAA"], "time": [_T]}
+        if "income.revenue" in fields:
+            cols["income.revenue"] = [10.0]
+        if "meta.country" in fields:
+            cols["meta.country"] = ["USA"]
+        return pl.DataFrame(cols).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"income.revenue", "meta.country"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["AAA"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual")
+
+
+class _CountryDual(ExtendedDataSource):
+    def load(self, fields, *, periods=None, frequency=None):
+        return pl.DataFrame({
+            "entity": ["USA"], "time": [_T], "income.revenue": [{"annual": 1000.0, "quarterly": 250.0}[frequency]],
+        }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"income.revenue"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["USA"]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual", frequencies=("annual", "quarterly"), entity_dim="country")
+
+
+def test_qualified_field_routed_to_country_source_injects_bridge(monkeypatch):
+    # bare income.revenue -> entity source (annual); quarterly.income.revenue -> the country source
+    # (quarterly). Bridge detection must be frequency-aware so meta.country is auto-injected.
+    drivers = {"ent": _EntityAnnual, "ctry": _CountryDual}
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: drivers[ref])
+    cfg = Config(
+        sources={"ent": SourceSpec("ent", "ent"), "ctry": SourceSpec("ctry", "ctry")},
+        precedence={"default": ["ent", "ctry"]},
+    )
+    panel = sources.load_panel_for(
+        cfg, {"income.revenue", "quarterly.income.revenue"}, target_freq="quarterly")
+    row = {r["entity"]: r for r in panel.iter_rows(named=True)}["AAA"]
+    assert row["income.revenue"] == 10.0            # entity source (annual, upsampled)
+    assert row["quarterly.income.revenue"] == 250.0  # USA's value remapped onto AAA via meta.country

@@ -61,7 +61,7 @@ def test_median_deferred_warns():
     assert "W-MEDIAN-DEFERRED" in codes("model m { on_missing median\n a = income.revenue }")
 
 
-def test_nonannual_period_warns():
-    assert "W-PERIOD-DEFERRED" in codes("model m at monthly { a = income.revenue }")
-    assert "W-PERIOD-DEFERRED" in codes("signal s at quarterly = income.revenue")
-    assert "W-PERIOD-DEFERRED" not in codes("model m at annual { a = income.revenue }")
+def test_nonannual_frequency_is_supported():
+    # frequency drives cross-source alignment (phase 4); it is no longer a deferred warning
+    assert "W-PERIOD-DEFERRED" not in codes("model m at monthly { a = income.revenue }")
+    assert "W-PERIOD-DEFERRED" not in codes("signal s at quarterly = income.revenue")

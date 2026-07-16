@@ -25,8 +25,8 @@ def _group(by: tuple[str, ...] | None) -> list[str]:
 
 
 # frequency name -> polars truncate/duration string (the target bucket for resample)
-_FREQ_DUR = {
-    "annual": "1y", "quarterly": "1q", "monthly": "1mo",
+FREQ_DUR = {
+    "annual": "1y", "quarterly": "3mo", "monthly": "1mo",
     "weekly": "1w", "daily": "1d", "hourly": "1h", "minute": "1m",
 }
 
@@ -68,7 +68,7 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
             n = int(a[1])
             return getattr(a[0], base)(window_size=n, min_samples=n).over(ENTITY)
         case "resample":  # downsample to `freq`, reduce each bucket by `agg`, broadcast back to the grid
-            return _AGG[a[2]](a[0]).over([pl.col(ENTITY), pl.col(TIME).dt.truncate(_FREQ_DUR[a[1]])])
+            return _AGG[a[2]](a[0]).over([pl.col(ENTITY), pl.col(TIME).dt.truncate(FREQ_DUR[a[1]])])
         case "roll_quantile":
             n = int(a[1])
             return a[0].rolling_quantile(quantile=float(a[2]), window_size=n, min_samples=n).over(ENTITY)

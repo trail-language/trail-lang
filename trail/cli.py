@@ -78,21 +78,22 @@ def catalog_cmd(target: str | None, config_path: str | None) -> None:
 @click.option("--out", "out_path", default=None, type=click.Path())
 def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool, out_path: str | None) -> None:
     program = _load_and_validate(path, with_stdlib=not no_stdlib)
+    models = {d.name: d for d in program.decls if isinstance(d, ast.ModelDecl)}
+    if model_name not in models:
+        click.echo(f"ERROR no model named '{model_name}'")
+        sys.exit(1)
+    universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     try:
         config = load_config(config_path)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", PanelConformanceWarning)
-            panel = load_panel_for(config, set(extract(program).fields))
+            panel = load_panel_for(config, set(extract(program).fields),
+                                   target_freq=models[model_name].frequency)
         for w in caught:
             if issubclass(w.category, PanelConformanceWarning):
                 click.echo(f"WARN  {w.message}")
     except ConfigError as e:
         click.echo(f"ERROR CONFIG {e}")
-        sys.exit(1)
-    universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
-    models = {d.name: d for d in program.decls if isinstance(d, ast.ModelDecl)}
-    if model_name not in models:
-        click.echo(f"ERROR no model named '{model_name}'")
         sys.exit(1)
     result = compile_model(models[model_name], universes).run(panel)
     if out_path:

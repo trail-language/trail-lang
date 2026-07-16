@@ -115,15 +115,55 @@ def conform_panel(
     return panel
 
 
-def load_panel_for(config: Config, fields: set[str]) -> pl.DataFrame:
-    primary = config.precedence["default"][0]  # phase 1: single effective source
-    spec = config.sources[primary]
-    source = resolve_driver(spec.driver)(spec.options)
-    try:
-        panel = source.load(fields, periods=config.periods)
-    finally:
-        source.close()
-    panel = conform_panel(panel, fields, strict=config.strict, source_name=primary)
+def _source_freq(src) -> str:
+    from trail.source import SupportsCapabilities
+
+    return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
+
+
+def _source_order(config: Config) -> list[str]:
+    """Sources to try, precedence.default first, then any others (for field assignment)."""
+    order = list(config.precedence.get("default", []))
+    order += [s for s in config.sources if s not in order]
+    return order
+
+
+def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None) -> pl.DataFrame:
+    """Load the configured sources, assign each requested field to its first provider
+    (precedence), align every source panel to the target frequency, and merge on
+    ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
+    referenced). A lone source with no explicit target is used at its native frequency.
+    """
+    from trail.align import align_and_merge, finest
+    from trail.source import SupportsDiscovery
+
+    remaining = set(fields)
+    loaded: list[tuple[pl.DataFrame, str]] = []
+    for sname in _source_order(config):
+        if not remaining:
+            break
+        spec = config.sources[sname]
+        src = resolve_driver(spec.driver)(spec.options)
+        try:
+            take = (remaining & src.available_fields()) if isinstance(src, SupportsDiscovery) else set(remaining)
+            if not take:
+                continue
+            panel = conform_panel(src.load(take, periods=config.periods), take,
+                                  strict=config.strict, source_name=sname)
+            panel = panel.select([ENTITY_COL, TIME_COL, *sorted(take)])  # disjoint field set
+            loaded.append((panel, _source_freq(src)))
+            remaining -= take
+        finally:
+            src.close()
+
+    if not loaded:
+        raise ConfigError("E-SOURCE-EMPTY no configured source provides the requested fields")
+
+    if len(loaded) == 1 and target_freq is None:
+        panel = loaded[0][0]
+    else:
+        panel = align_and_merge(loaded, target_freq or finest([f for _, f in loaded]))
+
     if config.periods is not None:
         lo, hi = config.periods
         yr = pl.col(TIME_COL).dt.year()

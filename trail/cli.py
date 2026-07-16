@@ -8,7 +8,7 @@ import click
 from lark.exceptions import UnexpectedInput
 
 from trail import ast, catalog as catalog_core
-from trail.compiler import compile_model
+from trail.compiler import compile_model, universe_chain
 from trail.config import ConfigError, load_config
 from trail.deps import extract
 from trail.macro import TrailFunctionError
@@ -98,7 +98,8 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
                 bound = next(iter(universes.values()))
             else:
                 bound = None
-            scoped = ast.Program(((bound,) if bound else ()) + (model,))
+            # the whole root chain: ancestor `where` fields must load too (universes compose)
+            scoped = ast.Program(tuple(universe_chain(bound, universes)) + (model,))
             panel = load_panel_for(config, set(extract(scoped).fields),
                                    target_freq=models[model_name].frequency)
         for w in caught:

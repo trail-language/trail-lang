@@ -42,6 +42,17 @@ def _kind(e) -> str | None:
     return kind_of(e.column) if isinstance(e, ast.FieldRef) else None
 
 
+def _is_ws_call(e) -> bool:
+    return isinstance(e, ast.Call) and e.name == "weighted_score"
+
+
+def _contains_ws(e) -> bool:
+    """weighted_score anywhere in the expression tree (deps.extract sees all calls)."""
+    from trail.deps import extract
+
+    return "weighted_score" in extract(e).functions
+
+
 def _check_agg(agg: ast.Expr, out: list[Issue]) -> None:
     """A literal aggregation name must be one the engine knows (catches typos and non-strings)."""
     if isinstance(agg, ast.Literal) and agg.value not in _AGG_NAMES:
@@ -125,12 +136,35 @@ def validate(program: ast.Program) -> list[Issue]:
 
     seen_top: set[str] = set()
     for decl in program.decls:
+        # backtest/learn REFERENCE a strategy/model name - they bind nothing, so
+        # `strategy s {...}` followed by `backtest s ...` is not a rebind (spec App. C).
+        if isinstance(decl, ast.OpaqueDecl) and decl.kind in ("backtest", "learn"):
+            continue
         name = getattr(decl, "name", None)
         if name is not None:
             if name in seen_top:
                 out.append(Issue("error", "E-NAME-REBOUND",
                                  f"duplicate top-level declaration '{name}'"))
             seen_top.add(name)
+
+    # universe roots must resolve (stocks or a declared universe) and must not cycle
+    for decl in program.decls:
+        if isinstance(decl, ast.UniverseDecl):
+            root = ".".join(decl.root)
+            if root != "stocks" and root not in universes:
+                out.append(Issue("error", "E-UNIVERSE-UNKNOWN",
+                                 f"universe '{decl.name}' has unknown root '{root}'"))
+    by_name = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
+    for name, decl in by_name.items():
+        seen_chain = {name}
+        cur = by_name.get(".".join(decl.root))
+        while cur is not None:
+            if cur.name in seen_chain:
+                out.append(Issue("error", "E-UNIVERSE-CYCLE",
+                                 f"universe '{name}' participates in a root cycle"))
+                break
+            seen_chain.add(cur.name)
+            cur = by_name.get(".".join(cur.root))
 
     for decl in program.decls:
         match decl:
@@ -148,6 +182,10 @@ def validate(program: ast.Program) -> list[Issue]:
                 for st in decl.statements:
                     if isinstance(st, ast.Assignment):
                         _check_expr(st.expr, defined, out)
+                        if (not _is_ws_call(st.expr)) and _contains_ws(st.expr):
+                            out.append(Issue("error", "E-MODEL-CONTEXT",
+                                             "weighted_score() is legal only as the complete "
+                                             "right-hand side of a model assignment"))
                     else:  # ScoreDecl
                         for c in st.cases:
                             _check_expr(c.cond, defined, out)

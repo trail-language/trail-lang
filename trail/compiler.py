@@ -24,9 +24,12 @@ def _to_agg(args: list[ast.Expr]) -> str:
         return AGG_FOR_KIND.get(kind_of(args[0].column) or "", "last")
     return "last"
 
+# mod guards divide-by-zero (NaN would MATCH comparisons: polars NaN > 0 is true); pow can
+# produce NaN for negative base ^ fractional exponent - normalized to null per §4.3.
 _BIN = {
     "add": lambda x, y: x + y, "sub": lambda x, y: x - y, "mul": lambda x, y: x * y,
-    "mod": lambda x, y: x % y, "pow": lambda x, y: x.pow(y),
+    "mod": lambda x, y: pl.when(y.is_null() | (y == 0)).then(None).otherwise(x % y),
+    "pow": lambda x, y: x.pow(y).fill_nan(None),
 }
 _CMP = {
     "eq": lambda x, y: x == y, "ne": lambda x, y: x != y, "gt": lambda x, y: x > y,
@@ -125,6 +128,20 @@ class ModelPlan:
         return self._lf_builder(panel).select([ENTITY, TIME, *self.exports]).collect()
 
 
+def universe_chain(uni: ast.UniverseDecl | None,
+                   universes: dict[str, ast.UniverseDecl]) -> list[ast.UniverseDecl]:
+    """The universe and its ancestors (sub -> base -> ... -> stocks). Universes COMPOSE
+    (reference §8.2): every `where` down the root chain applies. Cycles are a validation
+    error; walked defensively here with a seen-set."""
+    chain: list[ast.UniverseDecl] = []
+    seen: set[str] = set()
+    while uni is not None and uni.name not in seen:
+        seen.add(uni.name)
+        chain.append(uni)
+        uni = universes.get(".".join(uni.root))
+    return chain
+
+
 def compile_model(model: ast.ModelDecl, universes: dict[str, ast.UniverseDecl]) -> ModelPlan:
     # Universe binding per reference §8.3: explicit `on` wins; a sole declared
     # universe auto-binds; zero universes = full panel.
@@ -134,12 +151,14 @@ def compile_model(model: ast.ModelDecl, universes: dict[str, ast.UniverseDecl]) 
         uni = next(iter(universes.values()))
     else:
         uni = None
+    chain = universe_chain(uni, universes)
     scores = [s for s in model.statements if isinstance(s, ast.ScoreDecl)]
 
     def builder(panel: pl.DataFrame) -> pl.LazyFrame:
         lf = panel.lazy()
-        if uni is not None and uni.where is not None:
-            lf = lf.filter(compile_expr(uni.where, set()))
+        for u in chain:  # ancestor filters compose (AND)
+            if u.where is not None:
+                lf = lf.filter(compile_expr(u.where, set()))
         defined: set[str] = set()
         for st in model.statements:
             if isinstance(st, ast.ScoreDecl):

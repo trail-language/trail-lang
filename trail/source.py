@@ -90,7 +90,11 @@ class Capabilities:
 
 @runtime_checkable
 class SupportsDiscovery(Protocol):
-    """A source that can report which canonical fields it provides."""
+    """A source that can report which canonical fields it provides.
+
+    ``available_fields`` may opt into a ``frequency=`` keyword (feature-detected, like the
+    optional ``load`` kwargs) when the served field set differs per frequency - e.g. a
+    provider serving statements at annual/quarterly but only prices at daily."""
 
     def available_fields(self) -> set[str]: ...
 

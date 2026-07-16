@@ -195,7 +195,9 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
             if not take:
                 continue
             kw = {"periods": config.periods}
-            if entities is not None and _accepts_entities(type(src).load):
+            # only scope by the entity universe when the source is keyed by that dimension - a
+            # country-keyed source must not be handed stock tickers as its fetch scope.
+            if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
                 kw["entities"] = entities
             panel = conform_panel(src.load(take, **kw), take,
                                   strict=config.strict, source_name=sname)

@@ -181,6 +181,29 @@ def test_country_dim_annual_asof_onto_quarterly_stock_grid(gmd_plugin):
     assert out["gmd.gdp"].to_list() == [None, None, 1000.0, 1100.0]
 
 
+def test_multiple_foreign_dims_without_entity_source_raises(gmd_plugin):
+    other = pl.DataFrame({
+        "entity": ["EU"], "time": [dt.datetime(2022, 12, 31)], "other.metric": [5.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    with pytest.raises(ConfigError, match="E-DIM-AMBIGUOUS"):
+        align_and_merge([(_GDP, "annual", "country"), (other, "annual", "region")], "annual")
+
+
+def test_broadcast_rides_along_a_promoted_country_axis(monkeypatch):
+    monkeypatch.setattr(schema, "_plugin_fields", lambda: {
+        "gmd.gdp": FieldSpec("gmd.gdp", "level"),
+        "macro.risk_free": FieldSpec("macro.risk_free", "rate"),
+    })
+    glob = pl.DataFrame({
+        "entity": [BROADCAST_ENTITY], "time": [dt.datetime(2022, 12, 31)], "macro.risk_free": [0.02],
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    # no entity source: countries become the axis, and the global rate replicates onto each
+    out = align_and_merge([(_GDP, "annual", "country"), (glob, "annual", "entity")], "annual").sort("entity")
+    assert set(out["entity"].to_list()) == {"USA", "CAN"}
+    assert out["macro.risk_free"].to_list() == [0.02, 0.02]
+    assert set(out["gmd.gdp"].to_list()) == {1000.0, 500.0}
+
+
 def test_broadcast_at_or_finer_than_target_aggregates_then_broadcasts(macro_plugin):
     # a daily global series at a daily target: per-day bucket (identity), broadcast to both stocks
     daily_global = pl.DataFrame({

@@ -182,7 +182,15 @@ def align_and_merge(loaded: list[tuple], target_freq: str) -> pl.DataFrame:
     foreign = [(p, f, d) for p, f, d in items if d != "entity"]
     # with no entity-keyed source, the foreign dimension IS the entity axis (e.g. a lone
     # country model): treat those panels as canonical rather than remapping onto nothing.
-    if not canonical and not broadcast and foreign:
+    # A broadcast source may still ride along (it replicates onto whatever axis results).
+    # Coherent only for a single dimension; two distinct foreign axes have no common entity.
+    if not canonical and foreign:
+        dims = {d for _, _, d in foreign}
+        if len(dims) > 1:
+            raise ConfigError(
+                f"E-DIM-AMBIGUOUS no entity-bearing source, and foreign sources span multiple "
+                f"dimensions {sorted(dims)}; there is no single entity axis to compute on"
+            )
         canonical = [(p, f) for p, f, _ in foreign]
         foreign = []
 

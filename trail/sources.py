@@ -260,9 +260,14 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
         finally:
             src.close()
 
-    for fq, canon, _ in pending:  # a qualified request no source can serve at that frequency
+    for fq, canon, final in pending:  # requests no configured source can serve
         if fq is not None:
             raise ConfigError(f"E-FREQ-UNAVAILABLE no configured source provides '{canon}' at frequency '{fq}'")
+        if final not in bridges:  # an unserved injected bridge gets align's E-DIM-UNMAPPED instead
+            raise ConfigError(
+                f"E-FIELD-UNSERVED no configured source provides '{canon}' "
+                "(the model references it, so the run would fail downstream)"
+            )
     if not loaded:
         raise ConfigError("E-SOURCE-EMPTY no configured source provides the requested fields")
 

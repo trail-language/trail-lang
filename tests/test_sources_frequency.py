@@ -76,6 +76,14 @@ def test_unavailable_frequency_raises(monkeypatch):
         sources.load_panel_for(_cfg(), {"monthly.income.revenue"}, target_freq="monthly")
 
 
+def test_unserved_bare_field_raises_cleanly(monkeypatch):
+    # a bare field no source provides must be a clean load-time error, not a
+    # ColumnNotFoundError from polars at compile time (e.g. price.adj_close on edgar)
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _DualFreq)  # provides income.revenue only
+    with pytest.raises(ConfigError, match="E-FIELD-UNSERVED.*price.adj_close"):
+        sources.load_panel_for(_cfg(), {"income.revenue", "price.adj_close"}, target_freq="annual")
+
+
 def test_legacy_single_frequency_source_still_bare_loads(monkeypatch):
     monkeypatch.setattr(sources, "resolve_driver", lambda ref: _LegacyAnnual)
     panel = sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")

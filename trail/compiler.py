@@ -7,7 +7,22 @@ from dataclasses import dataclass
 import polars as pl
 
 from trail import ast
-from trail.ops import TIME, ENTITY, build, safe_div
+from trail.ops import AGG_FOR_KIND, TIME, ENTITY, build, safe_div
+from trail.schema import kind_of
+
+# to_<freq>(x[, agg]) sugar -> resample(x, freq, agg); agg defaults by the field's kind (§4.4).
+_TO_FREQ = {"to_annual": "annual", "to_quarterly": "quarterly",
+            "to_monthly": "monthly", "to_daily": "daily"}
+
+
+def _to_agg(args: list[ast.Expr]) -> str:
+    """Aggregation for a to_<freq> call: an explicit second arg wins; else the kind
+    default of a bare field argument; else last (a safe point-in-time snapshot)."""
+    if len(args) >= 2 and isinstance(args[1], ast.Literal) and isinstance(args[1].value, str):
+        return args[1].value
+    if isinstance(args[0], ast.FieldRef):
+        return AGG_FOR_KIND.get(kind_of(args[0].column) or "", "last")
+    return "last"
 
 _BIN = {
     "add": lambda x, y: x + y, "sub": lambda x, y: x - y, "mul": lambda x, y: x * y,
@@ -49,6 +64,8 @@ def compile_expr(e: ast.Expr, defined: set[str]) -> pl.Expr:
             return (pl.when(compile_expr(e.cond, defined))
                     .then(compile_expr(e.value, defined))
                     .otherwise(compile_expr(e.orelse, defined)))
+        case ast.Call() if e.name in _TO_FREQ:  # desugar to resample with a kind-aware default agg
+            return build("resample", [compile_expr(e.args[0], defined), _TO_FREQ[e.name], _to_agg(e.args)], {}, e.by)
         case ast.Call():
             args = [_call_arg(a, defined) for a in e.args]
             kwargs = {k: _call_arg(v, defined) for k, v in e.kwargs}

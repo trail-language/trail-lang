@@ -88,10 +88,17 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", PanelConformanceWarning)
             warnings.simplefilter("always", AlignmentWarning)
-            # scope loading to the run model (+ shared universes): a stray field in another
-            # model in the same file must not abort this run (e.g. E-FREQ-UNAVAILABLE).
-            _unis = tuple(d for d in program.decls if isinstance(d, ast.UniverseDecl))
-            scoped = ast.Program(_unis + (models[model_name],))
+            # scope loading to the run model + its BOUND universe (compile_model's binding
+            # rule: explicit `on` wins, a sole universe auto-binds). A stray field in another
+            # model - or in a universe this model never binds - must not abort this run.
+            model = models[model_name]
+            if model.universe is not None:
+                bound = universes.get(model.universe)
+            elif len(universes) == 1:
+                bound = next(iter(universes.values()))
+            else:
+                bound = None
+            scoped = ast.Program(((bound,) if bound else ()) + (model,))
             panel = load_panel_for(config, set(extract(scoped).fields),
                                    target_freq=models[model_name].frequency)
         for w in caught:

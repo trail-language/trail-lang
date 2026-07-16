@@ -26,6 +26,12 @@ import polars as pl
 ENTITY_COL = "entity"
 TIME_COL = "time"
 
+#: reserved entity id: a panel whose entity axis is entirely this value is a broadcast
+#: series - one value per period, replicated across every grid entity at align time.
+#: This is how a global macro series (e.g. a risk-free rate) meets a per-stock panel; the
+#: signal lives in the data plane (a source emits it), so the language stays symbol-free.
+BROADCAST_ENTITY = "*"
+
 
 class DataSource(ABC):
     """Minimum contract: turn requested canonical fields into a panel.

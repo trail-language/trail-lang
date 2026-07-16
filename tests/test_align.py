@@ -2,7 +2,19 @@ import datetime as dt
 
 import polars as pl
 
-from trail.align import align_and_merge, finest
+import pytest
+
+import trail.schema as schema
+from trail.align import AlignmentWarning, align_and_merge, finest
+from trail.config import ConfigError
+from trail.schema import FieldSpec
+from trail.source import BROADCAST_ENTITY
+
+
+@pytest.fixture
+def macro_plugin(monkeypatch):
+    monkeypatch.setattr(schema, "_plugin_fields",
+                        lambda: {"macro.risk_free": FieldSpec("macro.risk_free", "rate")})
 
 _Q = [
     dt.datetime(2022, 3, 31), dt.datetime(2022, 6, 30), dt.datetime(2022, 9, 30), dt.datetime(2022, 12, 31),
@@ -73,3 +85,71 @@ def test_all_sources_coarser_than_target_falls_back_to_union_grid():
     out = align_and_merge([(_MACRO, "annual")], "monthly")
     assert out.height == 1
     assert out["balance.total_assets"].to_list() == [500.0]
+
+
+_ANNUAL_FLOW = pl.DataFrame({
+    "entity": ["AAA"], "time": [dt.datetime(2022, 12, 31)], "income.revenue": [400.0],
+}).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+
+def test_upsampling_a_flow_warns_w_upsample_flow():
+    # an annual flow carried forward onto a finer grid repeats a total - mis-scales, so warn
+    with pytest.warns(AlignmentWarning, match="W-UPSAMPLE-FLOW"):
+        align_and_merge([(_PX, "daily"), (_ANNUAL_FLOW, "annual")], "daily")
+
+
+def test_upsampling_a_stock_does_not_warn(recwarn):
+    align_and_merge([(_PX, "daily"), (_MACRO, "annual")], "daily")  # total_assets is a stock
+    assert not [w for w in recwarn.list if issubclass(w.category, AlignmentWarning)]
+
+
+# a global (sentinel-entity) macro series that applies to every stock
+_GLOBAL = pl.DataFrame({
+    "entity": [BROADCAST_ENTITY, BROADCAST_ENTITY],
+    "time": [dt.datetime(2022, 12, 31), dt.datetime(2023, 12, 31)],
+    "macro.risk_free": [0.02, 0.03],
+}).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+# two stocks, daily
+_PX2 = pl.DataFrame({
+    "entity": ["AAA", "AAA", "BBB", "BBB"],
+    "time": [dt.datetime(2023, 1, 3), dt.datetime(2023, 1, 4)] * 2,
+    "price.adj_close": [10.0, 11.0, 20.0, 21.0],
+}).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+
+def test_global_series_broadcasts_across_every_grid_entity(macro_plugin, recwarn):
+    out = align_and_merge([(_PX2, "daily"), (_GLOBAL, "annual")], "daily").sort(["entity", "time"])
+    assert out.height == 4  # 2 stocks x 2 days; the sentinel "*" adds no rows of its own
+    assert set(out["entity"].to_list()) == {"AAA", "BBB"}
+    # every stock/day carries the FY2022 risk-free as-of (0.02 in effect across early 2023)
+    assert out["macro.risk_free"].to_list() == [0.02, 0.02, 0.02, 0.02]
+    assert out["price.adj_close"].to_list() == [10.0, 11.0, 20.0, 21.0]
+    assert not [w for w in recwarn.list if issubclass(w.category, AlignmentWarning)]  # rate is safe
+
+
+def test_broadcast_at_or_finer_than_target_aggregates_then_broadcasts(macro_plugin):
+    # a daily global series at a daily target: per-day bucket (identity), broadcast to both stocks
+    daily_global = pl.DataFrame({
+        "entity": [BROADCAST_ENTITY, BROADCAST_ENTITY],
+        "time": [dt.datetime(2023, 1, 3), dt.datetime(2023, 1, 4)],
+        "macro.risk_free": [0.05, 0.06],
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    out = align_and_merge([(_PX2, "daily"), (daily_global, "daily")], "daily").sort(["entity", "time"])
+    assert out["macro.risk_free"].to_list() == [0.05, 0.06, 0.05, 0.06]  # by day, across both stocks
+
+
+def test_all_broadcast_sources_raise_no_entity(macro_plugin):
+    # a model backed only by global series has no entities to compute on - reject, do not leak "*"
+    with pytest.raises(ConfigError, match="E-NO-ENTITY"):
+        align_and_merge([(_GLOBAL, "annual")], "annual")
+
+
+def test_panel_mixing_sentinel_and_real_entities_raises(macro_plugin):
+    mixed = pl.DataFrame({
+        "entity": [BROADCAST_ENTITY, "AAA"],
+        "time": [dt.datetime(2022, 12, 31), dt.datetime(2022, 12, 31)],
+        "macro.risk_free": [0.02, 0.03],
+    }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+    with pytest.raises(ConfigError, match="E-BROADCAST-MIXED"):
+        align_and_merge([(_PX2, "daily"), (mixed, "annual")], "daily")

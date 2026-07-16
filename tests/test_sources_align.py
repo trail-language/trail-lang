@@ -2,10 +2,19 @@
 import datetime as dt
 
 import polars as pl
+import pytest
 
+import trail.schema as schema
 from trail import sources
 from trail.config import Config, SourceSpec
-from trail.source import Capabilities, ExtendedDataSource
+from trail.schema import FieldSpec
+from trail.source import BROADCAST_ENTITY, Capabilities, ExtendedDataSource
+
+
+@pytest.fixture
+def macro_plugin(monkeypatch):
+    monkeypatch.setattr(schema, "_plugin_fields",
+                        lambda: {"macro.risk_free": FieldSpec("macro.risk_free", "rate")})
 
 
 class _PxSource(ExtendedDataSource):
@@ -80,3 +89,63 @@ def test_load_panel_for_single_source_no_target_is_passthrough(monkeypatch):
     panel = sources.load_panel_for(cfg, {"price.adj_close"}).sort("time")
     assert panel.height == 2
     assert panel["price.adj_close"].to_list() == [10.0, 11.0]
+
+
+class _TwoStockPxSource(ExtendedDataSource):
+    def load(self, fields, *, periods=None):
+        return pl.DataFrame({
+            "entity": ["AAA", "AAA", "BBB", "BBB"],
+            "time": [dt.datetime(2023, 1, 3), dt.datetime(2023, 1, 4)] * 2,
+            "price.adj_close": [10.0, 11.0, 20.0, 21.0],
+        }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"price.adj_close"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return ["AAA", "BBB"]
+
+    def capabilities(self):
+        return Capabilities(frequency="daily")
+
+
+class _GlobalMacroSource(ExtendedDataSource):
+    """A single global series keyed by the broadcast sentinel - applies to every entity."""
+
+    def load(self, fields, *, periods=None):
+        return pl.DataFrame({
+            "entity": [BROADCAST_ENTITY],
+            "time": [dt.datetime(2022, 12, 31)],
+            "macro.risk_free": [0.02],
+        }).with_columns(pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self):
+        return {"macro.risk_free"}
+
+    def describe_field(self, field):
+        return None
+
+    def entities(self, universe=None):
+        return [BROADCAST_ENTITY]
+
+    def capabilities(self):
+        return Capabilities(frequency="annual")
+
+
+def test_load_panel_for_broadcasts_global_macro_onto_every_stock(macro_plugin, monkeypatch):
+    # the spec worked example: price.return - macro.risk_free, macro being a single global series
+    drivers = {"px-driver": _TwoStockPxSource, "macro-driver": _GlobalMacroSource}
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: drivers[ref])
+    cfg = Config(
+        sources={"px": SourceSpec("px", "px-driver"), "macro": SourceSpec("macro", "macro-driver")},
+        precedence={"default": ["px", "macro"]},
+    )
+    panel = sources.load_panel_for(cfg, {"price.adj_close", "macro.risk_free"},
+                                   target_freq="daily").sort(["entity", "time"])
+    assert panel.height == 4  # 2 stocks x 2 days; no sentinel row leaks through
+    assert set(panel["entity"].to_list()) == {"AAA", "BBB"}
+    assert panel["macro.risk_free"].to_list() == [0.02, 0.02, 0.02, 0.02]  # broadcast to every stock/day
+    assert panel["price.adj_close"].to_list() == [10.0, 11.0, 20.0, 21.0]

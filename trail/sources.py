@@ -12,10 +12,11 @@ import warnings
 
 import polars as pl
 
+from trail.align import AlignmentWarning, align_and_merge, finest, is_broadcast
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
-from trail.source import TIME_COL, ENTITY_COL, DataSource
+from trail.source import TIME_COL, ENTITY_COL, DataSource, SupportsCapabilities, SupportsDiscovery
 
 __all__ = [
     "FixtureSource",
@@ -24,6 +25,7 @@ __all__ = [
     "load_panel_for",
     "resolve_driver",
     "PanelConformanceWarning",
+    "AlignmentWarning",
 ]
 
 
@@ -116,8 +118,6 @@ def conform_panel(
 
 
 def _source_freq(src) -> str:
-    from trail.source import SupportsCapabilities
-
     return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
 
 
@@ -134,9 +134,6 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
     referenced). A lone source with no explicit target is used at its native frequency.
     """
-    from trail.align import align_and_merge, finest
-    from trail.source import SupportsDiscovery
-
     remaining = set(fields)
     loaded: list[tuple[pl.DataFrame, str]] = []
     for sname in _source_order(config):
@@ -159,9 +156,9 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     if not loaded:
         raise ConfigError("E-SOURCE-EMPTY no configured source provides the requested fields")
 
-    if len(loaded) == 1 and target_freq is None:
+    if len(loaded) == 1 and target_freq is None and not is_broadcast(loaded[0][0]):
         panel = loaded[0][0]
-    else:
+    else:  # a lone broadcast source routes here too, so align_and_merge can reject it clearly
         panel = align_and_merge(loaded, target_freq or finest([f for _, f in loaded]))
 
     if config.periods is not None:

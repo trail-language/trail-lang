@@ -13,7 +13,7 @@ from trail.config import ConfigError, load_config
 from trail.deps import extract
 from trail.macro import TrailFunctionError
 from trail.pipeline import prepare
-from trail.sources import PanelConformanceWarning, load_panel_for
+from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for
 from trail.validate import validate
 
 
@@ -87,10 +87,11 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
         config = load_config(config_path)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", PanelConformanceWarning)
+            warnings.simplefilter("always", AlignmentWarning)
             panel = load_panel_for(config, set(extract(program).fields),
                                    target_freq=models[model_name].frequency)
         for w in caught:
-            if issubclass(w.category, PanelConformanceWarning):
+            if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
                 click.echo(f"WARN  {w.message}")
     except ConfigError as e:
         click.echo(f"ERROR CONFIG {e}")

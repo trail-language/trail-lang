@@ -57,8 +57,8 @@ def compile_expr(e: ast.Expr, defined: set[str]) -> pl.Expr:
 
 
 def _call_arg(a: ast.Expr, defined: set[str]):
-    # numeric literals pass through as python numbers (window sizes, quantiles)
-    if isinstance(a, ast.Literal) and isinstance(a.value, (int, float)) and not isinstance(a.value, bool):
+    # numeric/string literals pass through raw (window sizes, quantiles, freq/agg names)
+    if isinstance(a, ast.Literal) and isinstance(a.value, (int, float, str)) and not isinstance(a.value, bool):
         return a.value
     return compile_expr(a, defined)
 

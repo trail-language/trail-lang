@@ -11,6 +11,10 @@ _AGG_NAMES = frozenset(_AGG)
 _FREQ_NAMES = frozenset(FREQ_DUR)
 _TO_FUNCS = frozenset({"to_annual", "to_quarterly", "to_monthly", "to_daily"})
 
+# panel index columns that expressions may reference directly (e.g. year(time) for calendar
+# factors). They always exist on the panel and are never requested as source fields.
+_RESERVED_ATOMS = frozenset({"time", "entity"})
+
 # arities derive from the single function registry (trail.ops.OPS)
 KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {n: (sp.lo, sp.hi) for n, sp in OPS.items()}
 
@@ -75,7 +79,7 @@ def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
                 out.append(Issue("error", "E-PIN-UNSUPPORTED",
                                  f"source pin '@ {e.source}' is not supported in this phase"))
         case ast.NameRef():
-            if e.name not in defined:
+            if e.name not in defined and e.name not in _RESERVED_ATOMS:
                 out.append(Issue("error", "E-NAME-UNDEFINED", f"name '{e.name}' is not defined here"))
         case ast.Call():
             if e.name == "fwd_return":

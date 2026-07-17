@@ -19,6 +19,4 @@ def _grow_end(s, e)   = e - 2 * s if (s < 0 and e > 0) else (-e if (s > 0 and e 
 def cagr(x, n)     = (_grow_end(lag(x, n), x) / _grow_start(lag(x, n), x)) ^ (1 / n) - 1
 def increase(x, n) = (_grow_end(lag(x, n), x) - _grow_start(lag(x, n), x)) / _grow_start(lag(x, n), x)
 
-# trailing-window aggregations over the time axis (phase 3): duration-string windows
-def trailing(x, w) = roll_sum(x, w)
-def ttm(x)         = roll_sum(x, "1y")
+# ttm/trailing are kind-aware compiler desugars (a stock must not be summed) - see compiler.py

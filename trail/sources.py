@@ -277,7 +277,9 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
     # each request is (frequency | None, canonical, final_column, pin_entity | None);
     # final_column is the exact name the compiler reads. Deduped.
     requests = {_parse_field(f) for f in fields}
-    pending = list(requests | {(None, b, b, None) for b in bridges})
+    # deterministic order: fetch grouping drives join order drives OUTPUT COLUMN order,
+    # which must not vary with set-iteration order across processes
+    pending = sorted(requests | {(None, b, b, None) for b in bridges}, key=lambda r: r[2])
     # an entity pin may reference an entity outside the model universe (a benchmark index,
     # another country): widen an explicit fetch scope to include it.
     pin_entities = {r[3] for r in requests if r[3]}

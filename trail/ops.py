@@ -54,6 +54,8 @@ _AGG = {
     "prod": lambda e: e.product(),
     "compound": lambda e: (e + 1).product() - 1,
     "geomean": lambda e: e.log().mean().exp(),
+    "skew": lambda e: e.skew(),
+    "kurtosis": lambda e: e.kurtosis(),
     "range": lambda e: e.max() - e.min(),
     "change": lambda e: e.last() - e.first(),
 }

@@ -80,7 +80,13 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
     program = _load_and_validate(path, with_stdlib=not no_stdlib)
     models = {d.name: d for d in program.decls if isinstance(d, ast.ModelDecl)}
     if model_name not in models:
-        click.echo(f"ERROR no model named '{model_name}'")
+        strategies = {d.name for d in program.decls
+                      if isinstance(d, ast.OpaqueDecl) and d.kind == "strategy"}
+        if model_name in strategies:
+            click.echo(f"ERROR E-PHASE-DEFERRED '{model_name}' is a strategy; "
+                       "strategy/backtest execution lands in a later phase - run a model")
+        else:
+            click.echo(f"ERROR no model named '{model_name}'")
         sys.exit(1)
     universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     try:
@@ -110,7 +116,12 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
         sys.exit(1)
     result = compile_model(models[model_name], universes).run(panel)
     if out_path:
-        result.write_parquet(out_path)
+        if out_path.endswith(".csv"):
+            result.write_csv(out_path)
+        elif out_path.endswith((".json", ".ndjson")):
+            result.write_ndjson(out_path)
+        else:
+            result.write_parquet(out_path)
         click.echo(f"wrote {out_path}")
     else:
         click.echo(str(result))

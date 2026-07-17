@@ -14,7 +14,7 @@ from functools import lru_cache
 
 import polars as pl
 
-from trail.ast import _FREQUENCIES
+from trail import fieldname
 from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest, is_broadcast
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
@@ -176,26 +176,11 @@ def _source_order(config: Config) -> list[str]:
     return order
 
 
-def _split_freq(qualified: str) -> tuple[str | None, str]:
-    """(frequency | None, canonical) from a possibly frequency-qualified field string.
-    Mirrors the parser: a known frequency leading a 3+-part path is the qualifier."""
-    head, _, rest = qualified.partition(".")
-    if head in _FREQUENCIES and rest.count(".") >= 1:
-        return head, rest
-    return None, qualified
-
-
-def _split_pin(field: str) -> tuple[str, str | None]:
-    """(base, entity | None) from a possibly entity-pinned field string (x@SPY -> x, SPY)."""
-    base, sep, ent = field.partition("@")
-    return base, (ent if sep else None)
-
-
 def _parse_field(field: str) -> tuple[str | None, str, str, str | None]:
     """(frequency | None, canonical, final_column, entity | None) for a requested field.
     `final_column` is the exact name the compiler reads (bare, freq-qualified, or pinned)."""
-    base, ent = _split_pin(field)
-    fq, canon = _split_freq(base)
+    base, ent = fieldname.split_pin(field)
+    fq, canon = fieldname.split_frequency(base)
     return fq, canon, field, ent
 
 
@@ -289,9 +274,9 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
                 entities: list[str] | None, _get_src) -> pl.DataFrame:
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical).
-    bases = {_split_pin(f)[0] for f in fields}
+    bases = {fieldname.split_pin(f)[0] for f in fields}
     bridges = {_DIM_MAP_COL[d]
-               for d in _foreign_dims_for(config, {_split_freq(b) for b in bases}, _get_src)
+               for d in _foreign_dims_for(config, {fieldname.split_frequency(b) for b in bases}, _get_src)
                if d in _DIM_MAP_COL}
     # each request is (frequency | None, canonical, final_column, pin_entity | None);
     # final_column is the exact name the compiler reads. Deduped.

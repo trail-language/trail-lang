@@ -5,7 +5,7 @@ from importlib.resources import files
 
 from lark import Lark, Token, Transformer
 
-from trail import ast
+from trail import ast, fieldname
 
 _GRAMMAR = files("trail").joinpath("grammar.lark").read_text()
 
@@ -39,11 +39,8 @@ class _T(Transformer):
         names = tuple(p.value for p in parts)
         if len(names) == 1:
             return ast.NameRef(names[0])
-        # a known frequency leading a 3+-part path is a qualifier (annual.income.revenue);
-        # purely syntactic, so a 2-part daily.price is never mis-split.
-        if len(names) >= 3 and names[0] in ast._FREQUENCIES:
-            return ast.FieldRef(names[1:], frequency=names[0])
-        return ast.FieldRef(names)
+        freq, path = fieldname.parse_ref(names)
+        return ast.FieldRef(path, frequency=freq)
 
     def dotted(self, parts):
         return tuple(p.value for p in parts)

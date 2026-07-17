@@ -14,7 +14,7 @@ import polars as pl
 
 from trail import fieldname
 from trail.align import (
-    _DIM_MAP_COL, AlignmentWarning, LoadedPanel, align_and_merge, finest, is_broadcast,
+    AlignmentWarning, LoadedPanel, align_and_merge, finest, is_broadcast,
 )
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
@@ -152,24 +152,24 @@ def _source_dim(src) -> str:
     return src.capabilities().entity_dim
 
 
-def _foreign_dims_for(config: Config, reqs, get_src) -> set[str]:
-    """Entity dimensions (!= 'entity') required because a requested field routes to a provider
-    keyed by a coarser dimension (a country-keyed macro source). Chain-aware: each `(frequency,
-    canonical, pin_source)` routes through :func:`_chain_for`, and the dims of the sources that
-    actually SERVE it (chain sources that can claim it) are unioned - so bridge detection matches
-    the load loop's routing exactly. Each such dimension needs its bridge meta field loaded so
-    align can remap it onto entities. `get_src` shares constructed instances with the load loop."""
+def _foreign_bridges_for(config: Config, reqs, get_src) -> set[str]:
+    """Bridge meta fields required because a requested field routes to a provider keyed by a
+    coarser dimension (a country-keyed macro source). Chain-aware: each `(frequency, canonical,
+    pin_source)` routes through :func:`_chain_for`, and each foreign source that actually SERVES a
+    request contributes its ``Capabilities.bridge_field`` - so bridge detection matches the load
+    loop's routing exactly. That bridge field must be loaded so align can remap the dimension onto
+    entities. The bridge is a source-declared property, so the engine hardcodes no dimension."""
     reqs = list(reqs)
     chain_of = {r: _chain_for(config, r[1], r[2]) for r in reqs}
-    dims: set[str] = set()
+    bridges: set[str] = set()
     for sname in _all_source_order(config):
         routed = [r for r in reqs if sname in chain_of[r]]
         if not routed:
             continue
-        src = get_src(sname)
-        if _claimable(src, routed) and _source_dim(src) != "entity":
-            dims.add(_source_dim(src))
-    return dims
+        caps = get_src(sname).capabilities()
+        if caps.entity_dim != "entity" and caps.bridge_field and _claimable(get_src(sname), routed):
+            bridges.add(caps.bridge_field)
+    return bridges
 
 
 def _all_source_order(config: Config) -> list[str]:
@@ -338,8 +338,7 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical). Chain-aware.
     base_reqs = {(fq, canon, src) for fq, canon, final, ent, src in requests}
-    bridges = {_DIM_MAP_COL[d]
-               for d in _foreign_dims_for(config, base_reqs, _get_src) if d in _DIM_MAP_COL}
+    bridges = _foreign_bridges_for(config, base_reqs, _get_src)
     # deterministic order: fetch grouping drives join order drives OUTPUT COLUMN order,
     # which must not vary with set-iteration order across processes
     pending = sorted(requests | {(None, b, b, None, None) for b in bridges}, key=lambda r: r[2])
@@ -479,7 +478,8 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
                     keep = keep.with_columns(
                         [pl.col(coord_map[target]).cast(CANON_TIME) for _c, target, final in regular
                          if final in align_overrides and keep.schema[coord_map[target]] != CANON_TIME])
-                loaded.append(LoadedPanel(keep, fetch, _source_dim(src), coord_map))
+                loaded.append(LoadedPanel(keep, fetch, _source_dim(src), coord_map,
+                                          src.capabilities().bridge_field))
             # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
             # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the
             # grid (as-of, kind-aware, PIT-safe) exactly like a global series.

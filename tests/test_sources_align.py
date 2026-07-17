@@ -196,7 +196,7 @@ class _CountryMacroSource(DataSource):
         return ["USA", "CAN"]
 
     def capabilities(self):
-        return Capabilities(frequency="annual", entity_dim="country")
+        return Capabilities(frequency="annual", entity_dim="country", bridge_field="meta.country")
 
 
 def test_load_panel_for_remaps_country_macro_onto_stocks(gmd_plugin, monkeypatch):

@@ -8,11 +8,8 @@ from trail.config import DEFAULT_CONFIG
 from trail.source import (
     Capabilities,
     DataSource,
-    ExtendedDataSource,
     FieldInfo,
-    SupportsCapabilities,
-    SupportsDiscovery,
-    SupportsUniverse,
+    LoadRequest,
 )
 from trail.sources import FixtureSource
 from trail.testing import assert_source_conforms
@@ -20,13 +17,13 @@ from trail.testing import assert_source_conforms
 
 def test_datasource_is_abstract():
     with pytest.raises(TypeError):
-        DataSource()  # load is abstract
+        DataSource()  # load / available_fields / capabilities are abstract
 
 
-def test_fixture_is_core_tier_and_conforms():
+def test_fixture_conforms():
     src = FixtureSource({})
     assert isinstance(src, DataSource)
-    assert not isinstance(src, SupportsDiscovery)  # core-tier only
+    assert "income.revenue" in src.available_fields()  # discovery is core
     assert_source_conforms(src, {"income.revenue", "balance.total_assets"})
 
 
@@ -36,10 +33,10 @@ def test_close_is_idempotent():
     src.close()
 
 
-class _FullSource(ExtendedDataSource):
+class _FullSource(DataSource):
     name = "full"
 
-    def load(self, fields, *, periods=None):
+    def load(self, request: LoadRequest):
         return pl.DataFrame(
             {
                 "entity": ["A", "A", "B"],
@@ -48,7 +45,7 @@ class _FullSource(ExtendedDataSource):
             }
         ).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"income.revenue"}
 
     def describe_field(self, field):
@@ -61,26 +58,35 @@ class _FullSource(ExtendedDataSource):
         return Capabilities(frequency="annual", period_range=(2020, 2021), provenance="test")
 
 
-def test_extended_source_satisfies_all_protocols():
+def test_full_source_conforms():
     src = _FullSource({})
-    assert isinstance(src, SupportsDiscovery)
-    assert isinstance(src, SupportsUniverse)
-    assert isinstance(src, SupportsCapabilities)
+    assert src.available_fields() == {"income.revenue"}
+    assert src.capabilities().frequency == "annual"
+    assert src.entities() == ["A", "B"]
     assert_source_conforms(src, {"income.revenue"})
 
 
-def test_protocols_are_structural():
-    class Duck:
-        def available_fields(self):
-            return set()
+def test_optional_methods_have_defaults():
+    """describe_field / entities / close have safe defaults on the core base."""
 
-        def describe_field(self, field):
-            return None
+    class _Minimal(DataSource):
+        def load(self, request):
+            return pl.DataFrame(
+                {"entity": ["A"], "time": [dt.datetime(2020, 12, 31)], "income.revenue": [1.0]}
+            ).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    assert isinstance(Duck(), SupportsDiscovery)
-    assert not isinstance(object(), SupportsDiscovery)
+        def available_fields(self, frequency=None):
+            return {"income.revenue"}
+
+        def capabilities(self):
+            return Capabilities(frequency="annual")
+
+    src = _Minimal({})
+    assert src.describe_field("income.revenue") is None
+    assert src.entities() == []
+    assert_source_conforms(src, {"income.revenue"})
 
 
-def test_catalog_source_detail_reports_core_tier():
+def test_catalog_source_detail_reports_discovery():
     text = str(describe(("fixture",), DEFAULT_CONFIG))
-    assert "fixture" in text and "core-tier" in text
+    assert "fixture" in text and "provides" in text

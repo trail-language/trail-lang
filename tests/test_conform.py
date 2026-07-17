@@ -48,3 +48,22 @@ def test_date_time_normalized_to_datetime():
     p = pl.DataFrame({"entity": ["A"], "time": [dt.date(2020, 12, 31)], "income.revenue": [1.0]})
     out = conform_panel(p, {"income.revenue"}, strict=True)
     assert isinstance(out.schema["time"], pl.Datetime)
+
+
+def test_reserved_date_coordinate_passes_through_and_is_normalized():
+    p = pl.DataFrame({
+        "entity": ["A"], "time": _t(2020), "income.revenue": [1.0],
+        "__date:filing_date": [dt.date(2021, 2, 15)],  # a reserved alignment coordinate
+    })
+    out = conform_panel(p, {"income.revenue"}, strict=True)  # not an "unexpected column"
+    assert "__date:filing_date" in out.columns
+    assert isinstance(out.schema["__date:filing_date"], pl.Datetime)  # normalized like time
+
+
+def test_non_temporal_date_coordinate_is_a_deviation():
+    p = pl.DataFrame({
+        "entity": ["A"], "time": _t(2020), "income.revenue": [1.0],
+        "__date:filing_date": ["2021-02-15"],  # string, not temporal
+    })
+    with pytest.raises(ConfigError, match="non-temporal"):
+        conform_panel(p, {"income.revenue"}, strict=True)

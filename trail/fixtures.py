@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import datetime as dt
+from functools import lru_cache
 
 import polars as pl
+
+
+@lru_cache(maxsize=1)
+def fixture_fields() -> frozenset[str]:
+    """Canonical fields the fixture serves (its panel columns minus the index)."""
+    return frozenset(load_panel().columns) - {"entity", "time"}
 
 _SECS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 _SECTOR = {"AAA": "Tech", "BBB": "Tech", "CCC": "Tech", "DDD": "Energy", "EEE": "Energy", "FFF": "Financials"}

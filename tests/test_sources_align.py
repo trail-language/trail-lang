@@ -8,7 +8,7 @@ import trail.schema as schema
 from trail import sources
 from trail.config import Config, SourceSpec
 from trail.schema import FieldSpec
-from trail.source import BROADCAST_ENTITY, Capabilities, ExtendedDataSource
+from trail.source import BROADCAST_ENTITY, Capabilities, DataSource
 
 
 @pytest.fixture
@@ -23,15 +23,15 @@ def gmd_plugin(monkeypatch):
                         lambda: {"gmd.gdp": FieldSpec("gmd.gdp", "level")})
 
 
-class _PxSource(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _PxSource(DataSource):
+    def load(self, request):
         return pl.DataFrame({
             "entity": ["AAA", "AAA"],
             "time": [dt.datetime(2023, 1, 3), dt.datetime(2023, 1, 4)],
             "price.adj_close": [10.0, 11.0],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"price.adj_close"}
 
     def describe_field(self, field):
@@ -44,15 +44,15 @@ class _PxSource(ExtendedDataSource):
         return Capabilities(frequency="daily")
 
 
-class _MacroSource(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _MacroSource(DataSource):
+    def load(self, request):
         return pl.DataFrame({
             "entity": ["AAA"],
             "time": [dt.datetime(2022, 12, 31)],
             "balance.total_assets": [500.0],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"balance.total_assets"}
 
     def describe_field(self, field):
@@ -97,15 +97,15 @@ def test_load_panel_for_single_source_no_target_is_passthrough(monkeypatch):
     assert panel["price.adj_close"].to_list() == [10.0, 11.0]
 
 
-class _TwoStockPxSource(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _TwoStockPxSource(DataSource):
+    def load(self, request):
         return pl.DataFrame({
             "entity": ["AAA", "AAA", "BBB", "BBB"],
             "time": [dt.datetime(2023, 1, 3), dt.datetime(2023, 1, 4)] * 2,
             "price.adj_close": [10.0, 11.0, 20.0, 21.0],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"price.adj_close"}
 
     def describe_field(self, field):
@@ -118,17 +118,17 @@ class _TwoStockPxSource(ExtendedDataSource):
         return Capabilities(frequency="daily")
 
 
-class _GlobalMacroSource(ExtendedDataSource):
+class _GlobalMacroSource(DataSource):
     """A single global series keyed by the broadcast sentinel - applies to every entity."""
 
-    def load(self, fields, *, periods=None):
+    def load(self, request):
         return pl.DataFrame({
             "entity": [BROADCAST_ENTITY],
             "time": [dt.datetime(2022, 12, 31)],
             "macro.risk_free": [0.02],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"macro.risk_free"}
 
     def describe_field(self, field):
@@ -157,8 +157,9 @@ def test_load_panel_for_broadcasts_global_macro_onto_every_stock(macro_plugin, m
     assert panel["price.adj_close"].to_list() == [10.0, 11.0, 20.0, 21.0]
 
 
-class _StockSource(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _StockSource(DataSource):
+    def load(self, request):
+        fields = request.fields
         cols = {"entity": ["AAA", "BBB"], "time": [dt.datetime(2022, 12, 31)] * 2}
         if "income.net_income" in fields:
             cols["income.net_income"] = [10.0, 20.0]
@@ -166,7 +167,7 @@ class _StockSource(ExtendedDataSource):
             cols["meta.country"] = ["USA", "CAN"]
         return pl.DataFrame(cols).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"income.net_income", "meta.country"}
 
     def describe_field(self, field):
@@ -179,13 +180,13 @@ class _StockSource(ExtendedDataSource):
         return Capabilities(frequency="annual")
 
 
-class _CountryMacroSource(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _CountryMacroSource(DataSource):
+    def load(self, request):
         return pl.DataFrame({
             "entity": ["USA", "CAN"], "time": [dt.datetime(2022, 12, 31)] * 2, "gmd.gdp": [1000.0, 500.0],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"gmd.gdp"}
 
     def describe_field(self, field):

@@ -8,9 +8,7 @@ they are warned and coerced.
 """
 from __future__ import annotations
 
-import inspect
 import warnings
-from functools import lru_cache
 
 import polars as pl
 
@@ -20,7 +18,7 @@ from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
 from trail.source import (
-    BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, SupportsCapabilities, SupportsDiscovery,
+    BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, LoadRequest, is_date_col,
 )
 
 __all__ = [
@@ -43,10 +41,20 @@ class FixtureSource(DataSource):
 
     name = "fixture"
 
-    def load(self, fields: set[str], *, periods: tuple[int, int] | None = None) -> pl.DataFrame:
+    def load(self, request: LoadRequest) -> pl.DataFrame:
         from trail.fixtures import load_panel
 
         return load_panel()
+
+    def available_fields(self, frequency: str | None = None) -> set[str]:
+        from trail.fixtures import fixture_fields
+
+        return set(fixture_fields())
+
+    def capabilities(self):
+        from trail.source import Capabilities
+
+        return Capabilities(frequency="annual", provides_meta=True, provenance="in-memory fixture")
 
 
 def fixture(options: dict) -> FixtureSource:
@@ -101,33 +109,45 @@ def conform_panel(
     missing_fields = sorted(f for f in fields if f not in provided)
     if missing_fields:
         issues.append(f"missing requested field column(s) {missing_fields}")
+    # `__date:*` alignment coordinates are reserved (not schema fields); they pass through.
     allowed = {ENTITY_COL, TIME_COL} | set(active_schema())
-    extra = sorted(c for c in panel.columns if c not in allowed)
+    extra = sorted(c for c in panel.columns if c not in allowed and not is_date_col(c))
     if extra:
         issues.append(f"unexpected column(s) {extra}")
     if not _is_temporal_dtype(panel.schema[TIME_COL]):
         issues.append(f"'time' has non-temporal dtype {panel.schema[TIME_COL]}")
+    # a reserved date coordinate must be temporal - it becomes an alignment key (phase 3);
+    # a string/int `__date:*` would fail (or silently mis-compare) there, so flag it here.
+    nontemporal_dates = sorted(
+        c for c in panel.columns if is_date_col(c) and not _is_temporal_dtype(panel.schema[c]))
+    if nontemporal_dates:
+        issues.append(f"date coordinate(s) with non-temporal dtype {nontemporal_dates}")
 
     if strict and issues:
         raise ConfigError(f"E-SOURCE-PANEL source{src} " + "; ".join(issues))
     for msg in issues:
         warnings.warn(f"W-SOURCE-PANEL source{src} {msg}", PanelConformanceWarning, stacklevel=2)
     if issues:
-        panel = panel.select([c for c in panel.columns if c in allowed])
+        panel = panel.select([c for c in panel.columns if c in allowed or is_date_col(c)])
         if missing_fields:
             panel = panel.with_columns([_null_series(f, panel.height) for f in missing_fields])
-    # normalize a valid temporal time column to the canonical period-end Datetime
-    if _is_temporal_dtype(panel.schema[TIME_COL]) and panel.schema[TIME_COL] != CANON_TIME:
-        panel = panel.with_columns(pl.col(TIME_COL).cast(CANON_TIME))
+    # normalize the time column and any date coordinates to the canonical period-end Datetime
+    normalize = [
+        pl.col(c).cast(CANON_TIME)
+        for c in (TIME_COL, *(c for c in panel.columns if is_date_col(c)))
+        if _is_temporal_dtype(panel.schema[c]) and panel.schema[c] != CANON_TIME
+    ]
+    if normalize:
+        panel = panel.with_columns(normalize)
     return panel
 
 
 def _source_freq(src) -> str:
-    return src.capabilities().frequency if isinstance(src, SupportsCapabilities) else "annual"
+    return src.capabilities().frequency
 
 
 def _source_dim(src) -> str:
-    return src.capabilities().entity_dim if isinstance(src, SupportsCapabilities) else "entity"
+    return src.capabilities().entity_dim
 
 
 def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]], get_src) -> set[str]:
@@ -151,24 +171,6 @@ def _foreign_dims_for(config: Config, requests: set[tuple[str | None, str]], get
     return dims
 
 
-@lru_cache(maxsize=None)
-def _accepts_kwarg(func, name: str) -> bool:
-    """Whether `func` opts into keyword `name` (a named param or **kwargs). Feature
-    detection keeps optional seams (entities=, frequency=) off the base contracts: a
-    source that has not opted in is never handed the kwarg and cannot raise TypeError."""
-    try:
-        params = inspect.signature(func).parameters
-    except (TypeError, ValueError):
-        return False
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return True
-    return name in params
-
-
-def _accepts_entities(load_func) -> bool:
-    return _accepts_kwarg(load_func, "entities")
-
-
 def _source_order(config: Config) -> list[str]:
     """Sources to try, precedence.default first, then any others (for field assignment)."""
     order = list(config.precedence.get("default", []))
@@ -186,44 +188,15 @@ def _parse_field(field: str) -> tuple[str | None, str, str, str | None]:
 
 def _source_freqs(src) -> tuple[str, ...]:
     """Every frequency a source can serve (its default when it declares no explicit set)."""
-    if not isinstance(src, SupportsCapabilities):
-        return ("annual",)
     caps = src.capabilities()
     return caps.frequencies or (caps.frequency,)
 
 
-def _accepts_frequency(load_func) -> bool:
-    return _accepts_kwarg(load_func, "frequency")
-
-
-def _avail(src, fq: str | None):
-    """Fields the source can serve at frequency `fq` (None = its default), or None when the
-    source has no discovery. A source whose available_fields() opts into `frequency=` may
-    serve different fields per frequency (e.g. statements at annual/quarterly, price at daily)."""
-    if not isinstance(src, SupportsDiscovery):
-        return None
-    if _accepts_kwarg(type(src).available_fields, "frequency"):
-        return src.available_fields(frequency=fq or _source_freq(src))
-    return src.available_fields()
-
-
-def _has_named_param(func, name: str) -> bool:
-    try:
-        return name in inspect.signature(func).parameters
-    except (TypeError, ValueError):
-        return False
-
-
-def _check_freq_contract(src, sname: str) -> None:
-    """A source advertising frequencies beyond its default MUST take a named frequency=
-    param on load(). **kwargs does not count: a source that merely swallows the kwarg would
-    return default-frequency rows silently mislabeled as the requested frequency."""
-    freqs = _source_freqs(src)
-    if len(set(freqs)) > 1 and not _has_named_param(type(src).load, "frequency"):
-        raise ConfigError(
-            f"E-FREQ-UNWIRED source '{sname}' advertises frequencies {sorted(set(freqs))} but its "
-            "load() has no named frequency= parameter, so requests cannot reach it"
-        )
+def _avail(src, fq: str | None) -> set[str]:
+    """Fields the source can serve at frequency `fq` (None = its default). Discovery is core,
+    so this is always a set; a source may serve different fields per frequency (e.g. statements
+    at annual/quarterly, price at daily)."""
+    return src.available_fields(frequency=fq or _source_freq(src))
 
 
 def _claimable(src, requests):
@@ -238,8 +211,7 @@ def _claimable(src, requests):
             continue
         if fq not in cache:
             cache[fq] = _avail(src, fq)
-        a = cache[fq]
-        if a is None or canon in a:
+        if canon in cache[fq]:
             out.append(r)
     return out
 
@@ -249,9 +221,10 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
     """Load the configured sources, assign each requested field to its first provider
     (precedence), align every source panel to the target frequency, and merge on
     ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
-    referenced). `entities` is the candidate entity universe to scope the fetch to; it is
-    passed only to sources that opt in (see :func:`_accepts_entities`), else ignored. A lone
-    source with no explicit target is used at its native frequency.
+    referenced). `entities` is the candidate entity universe to scope the fetch to; it reaches
+    a source via ``LoadRequest.entities``, populated only for entity-keyed sources (a
+    country-keyed source gets ``None`` and uses its own set). A lone source with no explicit
+    target is used at its native frequency.
     """
     # sources are constructed once per run and shared by the bridge pre-scan and the load
     # loop (adapters may open sessions or set identities in __init__); all closed at the end.
@@ -295,30 +268,27 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
         if not pending:
             break
         src = _get_src(sname)
-        _check_freq_contract(src, sname)
         claimed = _claimable(src, pending)
         if not claimed:
             continue
         pending = [r for r in pending if r not in claimed]
+        # the entity universe scopes only entity-keyed sources (a country-keyed source keys on
+        # its own dimension, so it uses its configured set, not stock tickers) - loop-invariant.
+        req_entities = (tuple(entities)
+                        if entities is not None and _source_dim(src) == "entity" else None)
         # one fetch per distinct frequency; a bare request fetches the source's default.
         by_fetch: dict[str, list[tuple[str, str, str | None]]] = {}
         for fq, canon, final, ent in claimed:
             by_fetch.setdefault(fq or _source_freq(src), []).append((canon, final, ent))
         for fetch, items in by_fetch.items():
             take = {c for c, _, _ in items}
-            kw = {"periods": config.periods}
-            # scope by the entity universe only for entity-keyed sources that opt in
-            if entities is not None and _source_dim(src) == "entity" and _accepts_entities(type(src).load):
-                kw["entities"] = entities
-            if _accepts_frequency(type(src).load):
-                kw["frequency"] = fetch
-            elif fetch != _source_freq(src):  # asked for a non-default freq it can't be told about
-                raise ConfigError(
-                    f"E-FREQ-UNWIRED source '{sname}' advertises frequency '{fetch}' but its "
-                    "load() takes no frequency= argument, so it cannot serve it"
-                )
-            panel = conform_panel(src.load(take, **kw), take, strict=config.strict, source_name=sname)
-            # project canonical -> final columns; one fetch feeds bare + qualified aliases
+            request = LoadRequest(fields=frozenset(take), frequency=fetch,
+                                  periods=config.periods, entities=req_entities)
+            panel = conform_panel(src.load(request), take, strict=config.strict, source_name=sname)
+            # project canonical -> final columns; one fetch feeds bare + qualified aliases.
+            # NOTE: any __date:* coordinates are dropped by this projection today; phase 3
+            # (per-field alignment) will carry the relevant coordinate columns into
+            # align_and_merge before projecting them away.
             regular = [(c, fin) for c, fin, ent in items if ent is None]
             if regular:
                 proj = [pl.col(c).alias(fin) for c, fin in sorted(regular, key=lambda a: a[1])]

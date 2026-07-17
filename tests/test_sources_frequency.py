@@ -6,21 +6,22 @@ import pytest
 
 from trail import sources
 from trail.config import Config, ConfigError, SourceSpec
-from trail.source import Capabilities, DataSource, ExtendedDataSource
+from trail.source import Capabilities, DataSource
 
 _T = dt.datetime(2022, 12, 31)
 
 
-class _DualFreq(ExtendedDataSource):
+class _DualFreq(DataSource):
     calls: list = []
 
-    def load(self, fields, *, periods=None, frequency=None):
+    def load(self, request):
+        frequency = request.frequency
         type(self).calls.append(frequency)
         val = {"annual": 100.0, "quarterly": 25.0}[frequency]
         return pl.DataFrame({"entity": ["AAA"], "time": [_T], "income.revenue": [val]}).with_columns(
             pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"income.revenue"}
 
     def describe_field(self, field):
@@ -34,18 +35,19 @@ class _DualFreq(ExtendedDataSource):
 
 
 class _LegacyAnnual(DataSource):
-    def load(self, fields, *, periods=None):  # no frequency param -> single-frequency
+    def load(self, request):  # ignores request.frequency -> single-frequency source
         return pl.DataFrame({"entity": ["AAA"], "time": [_T], "income.revenue": [7.0]}).with_columns(
             pl.col("time").cast(pl.Datetime("us")))
+
+    def available_fields(self, frequency=None):
+        return {"income.revenue"}
+
+    def capabilities(self):
+        return Capabilities(frequency="annual")
 
 
 def _cfg():
     return Config(sources={"s": SourceSpec("s", "d")}, precedence={"default": ["s"]})
-
-
-def test_accepts_frequency_detection():
-    assert sources._accepts_frequency(_DualFreq.load) is True
-    assert sources._accepts_frequency(_LegacyAnnual.load) is False
 
 
 def test_dual_frequency_source_serves_both_variants(monkeypatch):
@@ -76,11 +78,11 @@ def test_unavailable_frequency_raises(monkeypatch):
         sources.load_panel_for(_cfg(), {"monthly.income.revenue"}, target_freq="monthly")
 
 
-class _PerFreqAvail(ExtendedDataSource):
+class _PerFreqAvail(DataSource):
     """Serves statements at annual but only price at daily - per-frequency availability."""
 
-    def load(self, fields, *, periods=None, frequency=None):
-        col = "price.adj_close" if frequency == "daily" else "income.revenue"
+    def load(self, request):
+        col = "price.adj_close" if request.frequency == "daily" else "income.revenue"
         return pl.DataFrame({"entity": ["AAA"], "time": [_T], col: [1.0]}).with_columns(
             pl.col("time").cast(pl.Datetime("us")))
 
@@ -118,45 +120,12 @@ def test_unserved_bare_field_raises_cleanly(monkeypatch):
 def test_legacy_single_frequency_source_still_bare_loads(monkeypatch):
     monkeypatch.setattr(sources, "resolve_driver", lambda ref: _LegacyAnnual)
     panel = sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
-    assert panel.to_dicts()[0]["income.revenue"] == 7.0  # no frequency= handed to a legacy load
+    assert panel.to_dicts()[0]["income.revenue"] == 7.0  # a single-frequency source ignores request.frequency
 
 
-class _MisWired(ExtendedDataSource):
-    """Declares two frequencies but load() takes no frequency= - cannot actually serve a non-default."""
-
-    def load(self, fields, *, periods=None):
-        return pl.DataFrame({"entity": ["AAA"], "time": [_T], "income.revenue": [100.0]}).with_columns(
-            pl.col("time").cast(pl.Datetime("us")))
-
-    def available_fields(self):
-        return {"income.revenue"}
-
-    def describe_field(self, field):
-        return None
-
-    def entities(self, universe=None):
-        return ["AAA"]
-
-    def capabilities(self):
-        return Capabilities(frequency="annual", frequencies=("annual", "quarterly"))
-
-
-def test_miswired_multifreq_source_raises_on_nondefault(monkeypatch):
-    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)
-    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
-        sources.load_panel_for(_cfg(), {"quarterly.income.revenue"}, target_freq="quarterly")
-
-
-def test_miswired_source_fails_fast_even_on_default(monkeypatch):
-    # a multi-frequency declaration without a named frequency= param is a contract lie;
-    # fail at first use rather than hide the mis-wiring until a non-default request
-    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)
-    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
-        sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
-
-
-class _EntityAnnual(ExtendedDataSource):
-    def load(self, fields, *, periods=None):
+class _EntityAnnual(DataSource):
+    def load(self, request):
+        fields = request.fields
         cols = {"entity": ["AAA"], "time": [_T]}
         if "income.revenue" in fields:
             cols["income.revenue"] = [10.0]
@@ -164,7 +133,7 @@ class _EntityAnnual(ExtendedDataSource):
             cols["meta.country"] = ["USA"]
         return pl.DataFrame(cols).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"income.revenue", "meta.country"}
 
     def describe_field(self, field):
@@ -177,13 +146,14 @@ class _EntityAnnual(ExtendedDataSource):
         return Capabilities(frequency="annual")
 
 
-class _CountryDual(ExtendedDataSource):
-    def load(self, fields, *, periods=None, frequency=None):
+class _CountryDual(DataSource):
+    def load(self, request):
         return pl.DataFrame({
-            "entity": ["USA"], "time": [_T], "income.revenue": [{"annual": 1000.0, "quarterly": 250.0}[frequency]],
+            "entity": ["USA"], "time": [_T],
+            "income.revenue": [{"annual": 1000.0, "quarterly": 250.0}[request.frequency]],
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"income.revenue"}
 
     def describe_field(self, field):
@@ -235,18 +205,6 @@ def test_qualified_field_routed_to_country_source_injects_bridge(monkeypatch):
     row = {r["entity"]: r for r in panel.iter_rows(named=True)}["AAA"]
     assert row["income.revenue"] == 10.0            # entity source (annual, upsampled)
     assert row["quarterly.income.revenue"] == 250.0  # USA's value remapped onto AAA via meta.country
-
-
-def test_kwargs_only_multifreq_source_rejected(monkeypatch):
-    # **kwargs passes kwarg-detection but can silently swallow frequency= - the named-param
-    # requirement closes the annual-rows-labeled-quarterly hole
-    class _Swallower(_DualFreq):
-        def load(self, fields, **kwargs):  # no named frequency param
-            return _DualFreq.load(self, fields, frequency="annual")
-
-    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _Swallower)
-    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
-        sources.load_panel_for(_cfg(), {"quarterly.income.revenue"}, target_freq="quarterly")
 
 
 def test_at_omitted_resolves_to_finest_referenced(monkeypatch):

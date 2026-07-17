@@ -10,7 +10,7 @@ from trail.compiler import compile_expr
 from trail.config import Config, ConfigError, SourceSpec
 from trail.deps import extract
 from trail.parser import parse_expr, parse_program
-from trail.source import Capabilities, ExtendedDataSource
+from trail.source import Capabilities, DataSource
 from trail.validate import validate
 
 
@@ -75,10 +75,10 @@ def test_compiler_reads_pinned_column():
 _DAYS = [dt.datetime(2023, 1, d) for d in (3, 4, 5)]
 
 
-class _MultiEntity(ExtendedDataSource):
+class _MultiEntity(DataSource):
     """Three stocks + SPY, daily prices."""
 
-    def load(self, fields, *, periods=None):
+    def load(self, request):
         rows = []
         base = {"AAA": 10.0, "BBB": 20.0, "SPY": 100.0}
         for ent, b in base.items():
@@ -86,7 +86,7 @@ class _MultiEntity(ExtendedDataSource):
                 rows.append({"entity": ent, "time": t, "price.adj_close": b + i})
         return pl.DataFrame(rows).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
-    def available_fields(self):
+    def available_fields(self, frequency=None):
         return {"price.adj_close"}
 
     def describe_field(self, field):
@@ -126,11 +126,11 @@ def test_entity_pin_widens_explicit_fetch_scope(monkeypatch):
     seen = {}
 
     class _Scoped(_MultiEntity):
-        def load(self, fields, *, periods=None, entities=None):
-            seen["entities"] = entities
-            return _MultiEntity.load(self, fields, periods=periods)
+        def load(self, request):
+            seen["entities"] = request.entities
+            return _MultiEntity.load(self, request)
 
     monkeypatch.setattr(sources, "resolve_driver", lambda ref: _Scoped)
     sources.load_panel_for(_cfg(), {"price.adj_close", "price.adj_close@SPY"},
                            target_freq="daily", entities=["AAA", "BBB"])
-    assert seen["entities"] == ["AAA", "BBB", "SPY"]  # pin entity added to the scope
+    assert seen["entities"] == ("AAA", "BBB", "SPY")  # pin entity added to the scope; request.entities is a tuple

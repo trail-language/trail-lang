@@ -27,9 +27,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/trail-language"
-Repository = "https://github.com/trail-language/trail-py"
+Repository = "https://github.com/trail-language/trail-lang"
 Specification = "https://github.com/trail-language/spec"
-Issues = "https://github.com/trail-language/trail-py/issues"
+Issues = "https://github.com/trail-language/trail-lang/issues"
 
 [project.scripts]
 trail = "trail.cli:main"

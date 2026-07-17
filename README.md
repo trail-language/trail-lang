@@ -2,7 +2,9 @@
   <img src="https://raw.githubusercontent.com/trail-language/spec/main/brand/icon-color-240.png" alt="Trail" width="120">
 </p>
 
-# trail-py
+# Trail
+
+> `pip install trail-lang` &middot; `import trail` &middot; CLI `trail`
 
 The reference implementation of **Trail** - a small, total, declarative language for computing
 financial indicators, scores, and screening strategies over panels of securities. Trail

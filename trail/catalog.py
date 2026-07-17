@@ -117,6 +117,10 @@ def _source_detail(name: str, spec) -> CatalogResult:
         if isinstance(src, SupportsCapabilities):
             caps = src.capabilities()
             rows.append(("frequency", caps.frequency))
+            if caps.frequencies:
+                rows.append(("frequencies", ", ".join(caps.frequencies)))
+            if caps.entity_dim != "entity":
+                rows.append(("entity_dim", f"{caps.entity_dim} (remapped onto entities via a bridge field)"))
             if caps.period_range:
                 rows.append(("period_range", f"{caps.period_range[0]}..{caps.period_range[1]}"))
             if caps.provenance:
@@ -131,6 +135,10 @@ def _source_detail(name: str, spec) -> CatalogResult:
             missing = sorted(relevant - avail)
             if missing:
                 rows.append(("unavailable_fields", ", ".join(missing)))
+                for f in missing:  # a source may explain WHY (edgar: "no market data in filings")
+                    info = src.describe_field(f)
+                    if info is not None and info.note:
+                        rows.append((f"  {f}", info.note))
         else:
             rows.append(("discovery", "not supported (core-tier source)"))
     finally:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from trail.ast import _FREQUENCIES
 from trail.schema import kind_of
 from trail.source import (
     TIME_COL,
@@ -81,7 +82,20 @@ def assert_source_conforms(
 
     if isinstance(src, SupportsCapabilities):
         caps = src.capabilities()
-        assert caps.frequency in {"annual", "quarterly", "mixed"}, f"bad frequency {caps.frequency!r}"
+        assert caps.frequency in _FREQUENCIES, (
+            f"bad frequency {caps.frequency!r}; expected one of {sorted(_FREQUENCIES)}")
+        for f in caps.frequencies:
+            assert f in _FREQUENCIES, f"bad entry {f!r} in frequencies"
+        if caps.frequencies:
+            assert caps.frequency in caps.frequencies, "default frequency not in frequencies"
+            if len(set(caps.frequencies)) > 1:
+                import inspect
+
+                params = inspect.signature(type(src).load).parameters
+                assert "frequency" in params, (
+                    "source declares multiple frequencies but load() has no named "
+                    "frequency= parameter (the engine will reject it: E-FREQ-UNWIRED)")
+        assert caps.entity_dim, "entity_dim must be a non-empty dimension name"
 
     if isinstance(src, SupportsUniverse):
         secs = src.entities()

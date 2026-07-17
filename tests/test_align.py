@@ -244,3 +244,9 @@ def test_panel_mixing_sentinel_and_real_entities_raises(macro_plugin):
     }).with_columns(pl.col("time").cast(pl.Datetime("us")))
     with pytest.raises(ConfigError, match="E-BROADCAST-MIXED"):
         align_and_merge([(_PX2, "daily"), (mixed, "annual")], "daily")
+
+
+def test_grid_coarser_than_target_warns():
+    # annual-only source at a daily target: the grid keeps annual resolution - warn loudly
+    with pytest.warns(AlignmentWarning, match="W-GRID-COARSER"):
+        align_and_merge([(_ANNUAL, "annual")], "daily")

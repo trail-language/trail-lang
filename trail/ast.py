@@ -133,7 +133,7 @@ class UniverseDecl:
 class ModelDecl:
     name: str
     universe: str | None
-    frequency: str
+    frequency: str | None  # None = finest referenced (spec §4.4)
     desc: str | None
     on_missing: str
     statements: tuple["Assignment | ScoreDecl", ...]
@@ -143,7 +143,7 @@ class ModelDecl:
 class SignalDecl:
     name: str
     universe: str | None
-    frequency: str
+    frequency: str | None  # None = finest referenced (spec §4.4)
     expr: "Expr"
 
 

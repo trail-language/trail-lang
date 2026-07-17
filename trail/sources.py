@@ -222,6 +222,25 @@ def _avail(src, fq: str | None):
     return src.available_fields()
 
 
+def _has_named_param(func, name: str) -> bool:
+    try:
+        return name in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _check_freq_contract(src, sname: str) -> None:
+    """A source advertising frequencies beyond its default MUST take a named frequency=
+    param on load(). **kwargs does not count: a source that merely swallows the kwarg would
+    return default-frequency rows silently mislabeled as the requested frequency."""
+    freqs = _source_freqs(src)
+    if len(set(freqs)) > 1 and not _has_named_param(type(src).load, "frequency"):
+        raise ConfigError(
+            f"E-FREQ-UNWIRED source '{sname}' advertises frequencies {sorted(set(freqs))} but its "
+            "load() has no named frequency= parameter, so requests cannot reach it"
+        )
+
+
 def _claimable(src, requests):
     """The subset of requests this source can serve. Each request is a tuple whose first two
     elements are (frequency | None, canonical); discovery- and frequency-aware."""
@@ -291,6 +310,7 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
         if not pending:
             break
         src = _get_src(sname)
+        _check_freq_contract(src, sname)
         claimed = _claimable(src, pending)
         if not claimed:
             continue

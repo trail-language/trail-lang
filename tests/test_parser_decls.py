@@ -45,7 +45,7 @@ def test_model_statements_and_defaults():
 
 def test_model_defaults_when_clauses_absent():
     m = parse_program("model x { a = 1 }").decls[0]
-    assert m.universe is None and m.frequency == "annual" and m.on_missing == "skip"
+    assert m.universe is None and m.frequency is None and m.on_missing == "skip"
 
 
 def test_signal_shape():

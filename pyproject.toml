@@ -1,6 +1,6 @@
 [project]
 name = "trail-lang"
-version = "0.10.0"
+version = "0.11.0"
 description = "A declarative expression language for financial indicators, scoring, and screening over entity panels"
 readme = "README.md"
 requires-python = ">=3.11"

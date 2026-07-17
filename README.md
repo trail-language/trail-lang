@@ -12,7 +12,7 @@ The language specification (grammar, reference, standard library) lives in
 [**trail-language/spec**](https://github.com/trail-language/spec).
 
 ```trail
-model quality on us_main period annual {
+model quality on us_main at annual {
     operating_margin = income.operating_income / income.revenue
     score om_score weight 7 {
         2 if operating_margin > 0.12

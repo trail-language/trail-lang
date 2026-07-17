@@ -70,14 +70,21 @@ class _T(Transformer):
         node, src = s
         return ast.FieldRef(node.path, source=src.value, frequency=node.frequency)
 
-    def entity_pinned(self, s):
-        # atom "@" NAME "(" STRING ")" - the general selector form; only entity(...) exists.
+    def selector_pinned(self, s):
+        # atom "@" NAME "(" expr ")" - the general selector form: entity("SPY") | align(<expr>).
         node, selector, arg = s
-        if selector.value != "entity":
-            raise ValueError(f"unknown pin selector '{selector.value}(...)'; expected entity(\"...\")")
+        sel = selector.value
         if not isinstance(node, ast.FieldRef):
-            raise ValueError("@ entity(...) pins a schema field reference, not an expression")
-        return ast.FieldRef(node.path, frequency=node.frequency, entity=arg.value[1:-1])
+            raise ValueError(f"@ {sel}(...) qualifies a schema field reference, not an expression")
+        if sel == "entity":
+            if not (isinstance(arg, ast.Literal) and isinstance(arg.value, str)):
+                raise ValueError('@ entity(...) needs a quoted symbol, e.g. entity("SPY")')
+            return ast.FieldRef(node.path, frequency=node.frequency, entity=arg.value)
+        if sel == "align":
+            # `arg` is an expression over the source's date columns (e.g. truncate(filing_date,"1y"));
+            # it overrides the field's alignment coordinate. Materialized in the loader.
+            return ast.FieldRef(node.path, frequency=node.frequency, align=arg)
+        raise ValueError(f"unknown pin selector '{sel}(...)'; expected entity(\"...\") or align(...)")
 
     def neg(self, s):
         return ast.Neg(s[0])

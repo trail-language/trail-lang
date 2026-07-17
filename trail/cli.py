@@ -106,8 +106,10 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
                 bound = None
             # the whole root chain: ancestor `where` fields must load too (universes compose)
             scoped = ast.Program(tuple(universe_chain(bound, universes)) + (model,))
-            panel = load_panel_for(config, set(extract(scoped).fields),
-                                   target_freq=models[model_name].frequency)
+            dep = extract(scoped)
+            panel = load_panel_for(config, set(dep.fields),
+                                   target_freq=models[model_name].frequency,
+                                   align_overrides=dep.align_overrides)
         for w in caught:
             if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
                 click.echo(f"WARN  {w.message}")

@@ -70,6 +70,30 @@ def _lint_stock_flow(e: ast.BinOp, out: list[Issue]) -> None:
                          "flow/stock ratio uses a point-in-time balance value; consider avg2(...)"))
 
 
+def _check_align(e, out: list[Issue]) -> None:
+    """Validate an `@ align(expr)` coordinate override. Its NAMEs are the source's date columns
+    (existence checked at load), so only function names/arities are statically checkable here."""
+    match e:
+        case ast.NameRef() | ast.Literal():
+            pass  # a source date-column name or a literal unit (e.g. "1y")
+        case ast.Call():
+            if e.name not in KNOWN_FUNCTIONS:
+                out.append(Issue("error", "E-FUNC-UNKNOWN", f"unknown function '{e.name}' in @align"))
+            else:
+                lo, hi = KNOWN_FUNCTIONS[e.name]
+                if not (lo <= len(e.args) <= hi):
+                    out.append(Issue("error", "E-FUNC-ARITY",
+                                     f"{e.name} takes {lo}..{hi} args in @align, got {len(e.args)}"))
+            for a in e.args:
+                _check_align(a, out)
+        case ast.FieldRef():
+            out.append(Issue("error", "E-ALIGN-EXPR",
+                             "@align may not reference a schema field; use the source's date column names"))
+        case _:
+            out.append(Issue("error", "E-ALIGN-EXPR",
+                             "@align supports only temporal functions over the source's date columns"))
+
+
 def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
     match e:
         case ast.FieldRef():
@@ -78,6 +102,8 @@ def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
             if e.source is not None:
                 out.append(Issue("error", "E-PIN-UNSUPPORTED",
                                  f"source pin '@ {e.source}' is not supported in this phase"))
+            if e.align is not None:
+                _check_align(e.align, out)
         case ast.NameRef():
             if e.name not in defined and e.name not in _RESERVED_ATOMS:
                 out.append(Issue("error", "E-NAME-UNDEFINED", f"name '{e.name}' is not defined here"))

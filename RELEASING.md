@@ -8,7 +8,7 @@ trusted publishing (OIDC, no stored token). See `.github/workflows/release.yml`.
 1. Reserve/create the project `trail-lang` on PyPI.
 2. On PyPI, under the project's **Publishing** settings, add a GitHub trusted publisher:
    - Owner: `trail-language`
-   - Repository: `trail-py`
+   - Repository: `trail-lang`
    - Workflow: `release.yml`
    - Environment: `pypi`
 3. In this repository's **Settings > Environments**, create an environment named `pypi`

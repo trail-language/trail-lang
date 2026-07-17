@@ -104,3 +104,65 @@ def test_align_non_datetime_expr_is_rejected():
 def test_align_unknown_date_column_is_rejected():
     with pytest.raises(ConfigError, match="E-ALIGN-UNKNOWN"):
         _load({"income.revenue": ast.NameRef("nonexistent")})
+
+
+# --- review fixes: malformed qualifiers, chaining, and same-field conflicts ---
+import lark  # noqa: E402
+
+
+def test_entity_non_string_arg_is_a_parse_error():
+    # arg widened STRING->expr: a non-string entity arg is now a transformer-level rejection
+    with pytest.raises((lark.exceptions.VisitError, ValueError)):
+        parse_expr("price.adj_close @ entity(123)")
+
+
+def test_chaining_two_qualifiers_is_rejected():
+    # bare chaining is grammar-rejected (a pin isn't an atom); the parenthesized form reaches
+    # the transformer, where _reject_requalified refuses a second qualifier
+    with pytest.raises((lark.exceptions.VisitError, ValueError, lark.exceptions.UnexpectedInput)):
+        parse_expr('price.adj_close @ entity("SPY") @ align(accepted)')
+    with pytest.raises((lark.exceptions.VisitError, ValueError)):
+        parse_expr('(price.adj_close @ entity("SPY")) @ align(accepted)')
+
+
+def test_conflicting_align_on_same_field_is_rejected():
+    src = "model m { a = income.revenue\n b = income.revenue @ align(accepted) }"
+    codes = {i.code for i in validate(prepare(src))}
+    assert "E-ALIGN-CONFLICT" in codes
+
+
+def test_consistent_align_on_same_field_is_ok():
+    src = "model m { a = income.revenue @ align(accepted)\n b = income.revenue @ align(accepted) + 1 }"
+    codes = {i.code for i in validate(prepare(src))}
+    assert "E-ALIGN-CONFLICT" not in codes
+
+
+class _NullUnusedDateSource(DataSource):
+    """Default coordinate is `accepted` (non-null); `filing` is null and unused by the override."""
+
+    name = "nulldate"
+
+    def load(self, request: LoadRequest) -> pl.DataFrame:
+        cols = {"entity": ["X"], "time": [dt.datetime(2022, 12, 31)], "income.revenue": [100.0],
+                date_col("filing"): [None], date_col("accepted"): [dt.datetime(2023, 1, 10)]}
+        return pl.DataFrame(cols).with_columns(
+            [pl.col(c).cast(pl.Datetime("us")) for c in cols if c == "time" or c.startswith("__date:")])
+
+    def available_fields(self, frequency=None):
+        return {"income.revenue"}
+
+    def describe_field(self, field):
+        return FieldInfo(field, True, "direct", aligns_on="accepted") if field == "income.revenue" else None
+
+    def capabilities(self):
+        return Capabilities(frequency="annual", frequencies=("annual",), pit=True)
+
+
+def test_override_does_not_carry_unused_null_date_columns(monkeypatch, recwarn):
+    # the override references only `accepted`; the null, unused `filing` must not be carried
+    # (carrying it would emit a spurious W-PIT-PARTIAL for its nulls)
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _NullUnusedDateSource)
+    cfg = Config(sources={"nulldate": SourceSpec("nulldate", "drv")}, precedence={"default": ["nulldate"]})
+    ov = {"income.revenue": parse_expr('income.revenue @ align(truncate(accepted, "1y"))').align}
+    sources.load_panel_for(cfg, {"income.revenue"}, target_freq="annual", align_overrides=ov)
+    assert not [w for w in recwarn.list if "W-PIT-PARTIAL" in str(w.message)]

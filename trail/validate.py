@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from trail import ast
+from trail.deps import extract as _extract
 from trail.ops import _AGG, FREQ_DUR, OPS
 from trail.schema import is_field, kind_of
 
@@ -190,6 +191,10 @@ def validate(program: ast.Program) -> list[Issue]:
                 _check_expr(decl.where, set(), out)
             case ast.ModelDecl():
                 _phase_warnings(decl, out)
+                for col in sorted(_extract(ast.Program((decl,))).align_conflicts):
+                    out.append(Issue("error", "E-ALIGN-CONFLICT",
+                                     f"field '{col}' is referenced with conflicting @align coordinates "
+                                     f"(plain vs overridden, or two different overrides) in model '{decl.name}'"))
                 if decl.universe is not None and decl.universe not in universes:
                     out.append(Issue("error", "E-UNIVERSE-UNKNOWN",
                                      f"model '{decl.name}' references unknown universe '{decl.universe}'"))

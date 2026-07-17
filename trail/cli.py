@@ -5,7 +5,7 @@ import sys
 import warnings
 
 import click
-from lark.exceptions import UnexpectedInput
+from lark.exceptions import UnexpectedInput, VisitError
 
 from trail import ast, catalog as catalog_core
 from trail.compiler import compile_model, universe_chain
@@ -31,6 +31,9 @@ def _load_and_validate(path: str, with_stdlib: bool = True) -> ast.Program:
         tok = getattr(e, "token", None)
         detail = f": unexpected {str(tok)!r}" if tok else ""
         click.echo(f"ERROR SYNTAX at line {e.line}, column {e.column}{detail}")
+        sys.exit(1)
+    except VisitError as e:  # a transformer-level rejection (e.g. a malformed @ qualifier arg)
+        click.echo(f"ERROR SYNTAX {e.orig_exc}")
         sys.exit(1)
     except TrailFunctionError as e:
         click.echo(f"ERROR FUNC {e}")

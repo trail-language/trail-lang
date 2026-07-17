@@ -243,6 +243,20 @@ def _compile_align(node, date_cols: set[str]) -> pl.Expr:
             raise ConfigError("E-ALIGN-EXPR @align supports only temporal functions over date columns")
 
 
+def _align_date_refs(node) -> set[str]:
+    """The `__date:*` columns an `@ align(expr)` references (its NAMEs), for carrying just those."""
+    from trail import ast
+
+    if isinstance(node, ast.NameRef):
+        return {date_col(node.name)}
+    if isinstance(node, ast.Call):
+        out: set[str] = set()
+        for a in node.args:
+            out |= _align_date_refs(a)
+        return out
+    return set()
+
+
 def _coord_for(src, canon: str, panel_cols, pit_naive: bool) -> str | None:
     """The physical `__date:*` coordinate a field aligns on (from ``describe_field(canon).aligns_on``),
     or None when PIT is off, the field is naive, or the source didn't actually emit the column."""
@@ -340,16 +354,22 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
                     dc = _coord_for(src, c, panel.columns, pit_naive)
                     if dc:
                         coord_map[fin] = dc
-                # carried date columns: the resolved coordinates; plus (only when an @align expr
-                # needs them) every source date column, so the expr may reference any of them.
+                # carried date columns: the resolved coordinates, plus (only for an @align expr)
+                # the source date columns that expr actually references - carrying unused date
+                # columns would emit spurious W-PIT-PARTIAL noise for their nulls.
                 has_override = not pit_naive and any(fin in align_overrides for _, fin in regular)
-                date_cols = ([col for col in panel.columns if is_date_col(col)] if has_override
-                             else list(dict.fromkeys(coord_map[fin] for _, fin in regular if fin in coord_map)))
+                resolved = list(dict.fromkeys(coord_map[fin] for _, fin in regular if fin in coord_map))
+                src_dates = {c for c in panel.columns if is_date_col(c)}
+                referenced = set()
+                if has_override:
+                    for _, fin in regular:
+                        if fin in align_overrides:
+                            referenced |= _align_date_refs(align_overrides[fin])
+                date_cols = list(dict.fromkeys([*resolved, *sorted(referenced & src_dates)]))
                 keep = panel.select([ENTITY_COL, TIME_COL, *proj, *[pl.col(d) for d in date_cols]])
                 if has_override:  # materialize a derived coordinate per @align-overridden field
-                    avail = {c for c in date_cols}
                     keep = keep.with_columns(
-                        [_compile_align(align_overrides[fin], avail).alias(date_col(f"__align__{fin}"))
+                        [_compile_align(align_overrides[fin], src_dates).alias(date_col(f"__align__{fin}"))
                          for _, fin in regular if fin in align_overrides])
                     for _, fin in regular:
                         if fin not in align_overrides:

@@ -13,6 +13,13 @@ _ARITH = {"+": "add", "-": "sub", "*": "mul", "/": "div", "%": "mod"}
 _CMP = {"==": "eq", "!=": "ne", ">": "gt", "<": "lt", ">=": "ge", "<=": "le"}
 
 
+def _reject_requalified(node, what: str) -> None:
+    """A field reference takes at most one `@` qualifier (source/entity/align). Chaining a second
+    would silently drop the first, so reject it. Frequency is a prefix, not an `@` qualifier."""
+    if isinstance(node, ast.FieldRef) and (node.source or node.entity or node.align is not None):
+        raise ValueError(f"{what} chains a second @ qualifier onto an already-qualified field")
+
+
 def _num(text: str) -> int | float:
     text = text.replace("_", "")
     val = float(text)
@@ -68,6 +75,7 @@ class _T(Transformer):
     # --- operators ---
     def pinned(self, s):
         node, src = s
+        _reject_requalified(node, f"@ {src.value}")
         return ast.FieldRef(node.path, source=src.value, frequency=node.frequency)
 
     def selector_pinned(self, s):
@@ -76,6 +84,7 @@ class _T(Transformer):
         sel = selector.value
         if not isinstance(node, ast.FieldRef):
             raise ValueError(f"@ {sel}(...) qualifies a schema field reference, not an expression")
+        _reject_requalified(node, f"@ {sel}(...)")
         if sel == "entity":
             if not (isinstance(arg, ast.Literal) and isinstance(arg.value, str)):
                 raise ValueError('@ entity(...) needs a quoted symbol, e.g. entity("SPY")')

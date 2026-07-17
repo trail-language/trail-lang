@@ -14,6 +14,9 @@ class _Acc:
     pins: set[tuple[str, str]] = dfield(default_factory=set)
     #: physical column -> `@ align(expr)` override AST (the field's alignment coordinate)
     align_overrides: dict[str, object] = dfield(default_factory=dict)
+    #: physical column -> the set of align signatures seen for it (None = plain reference); a
+    #: column with more than one signature is referenced with conflicting coordinates
+    field_aligns: dict[str, set] = dfield(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,8 @@ class DepReport:
     locals_used: frozenset[str]
     pins: frozenset[tuple[str, str]]
     align_overrides: dict = dfield(default_factory=dict)
+    #: physical columns referenced with conflicting `@align` coordinates (or plain vs aligned)
+    align_conflicts: frozenset[str] = dfield(default_factory=frozenset)
 
 
 def _walk(node, acc: _Acc) -> None:
@@ -31,6 +36,7 @@ def _walk(node, acc: _Acc) -> None:
             acc.fields.add(node.qualified_column)  # frequency-qualified so the loader sees the freq
             if node.source:
                 acc.pins.add((node.column, node.source))
+            acc.field_aligns.setdefault(node.qualified_column, set()).add(node.align)
             if node.align is not None:  # names in the align expr are source DATE columns, not fields
                 acc.align_overrides[node.qualified_column] = node.align
         case ast.NameRef():
@@ -83,4 +89,5 @@ def extract(node) -> DepReport:
     return DepReport(
         frozenset(acc.fields), frozenset(acc.functions), frozenset(acc.locals_used),
         frozenset(acc.pins), dict(acc.align_overrides),
+        frozenset(col for col, sigs in acc.field_aligns.items() if len(sigs) > 1),
     )

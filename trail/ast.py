@@ -25,6 +25,7 @@ class FieldRef:
     source: str | None = None     # `@ source` pin
     frequency: str | None = None  # native-frequency qualifier (annual.income.revenue)
     entity: str | None = None     # `@ entity("SPY")` cross-entity pin (exclusive with source)
+    align: object | None = None   # `@ align(<expr>)` alignment-coordinate override (an expr AST)
 
     @property
     def column(self) -> str:

@@ -23,7 +23,7 @@
      | unary
 ?unary: "-" unary                               -> neg
       | pinned
-?pinned: atom "@" NAME "(" STRING ")"           -> entity_pinned
+?pinned: atom "@" NAME "(" expr ")"             -> selector_pinned
        | atom "@" NAME                          -> pinned
        | atom
 ?atom: call

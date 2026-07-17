@@ -218,6 +218,45 @@ def _claimable(src, requests):
     return out
 
 
+def _compile_align(node, date_cols: set[str]) -> pl.Expr:
+    """Lower an `@ align(expr)` coordinate expression: a NAME binds to the source's `__date:<name>`
+    column, a literal passes raw, a call lowers via the operator library. Yields a polars expr
+    that must evaluate to a datetime (checked by the caller)."""
+    from trail import ast
+    from trail.ops import build as _op_build
+
+    match node:
+        case ast.NameRef():
+            dc = date_col(node.name)
+            if dc not in date_cols:
+                have = sorted(c[len(date_col("")):] for c in date_cols)
+                raise ConfigError(
+                    f"E-ALIGN-UNKNOWN @align references date column '{node.name}', but the source "
+                    f"provides {have or 'no date columns'}")
+            return pl.col(dc)
+        case ast.Literal():
+            return node.value  # raw (e.g. the "1y" unit of truncate)
+        case ast.Call():
+            args = [_compile_align(a, date_cols) for a in node.args]
+            return _op_build(node.name, args, {}, None)
+        case _:
+            raise ConfigError("E-ALIGN-EXPR @align supports only temporal functions over date columns")
+
+
+def _align_date_refs(node) -> set[str]:
+    """The `__date:*` columns an `@ align(expr)` references (its NAMEs), for carrying just those."""
+    from trail import ast
+
+    if isinstance(node, ast.NameRef):
+        return {date_col(node.name)}
+    if isinstance(node, ast.Call):
+        out: set[str] = set()
+        for a in node.args:
+            out |= _align_date_refs(a)
+        return out
+    return set()
+
+
 def _coord_for(src, canon: str, panel_cols, pit_naive: bool) -> str | None:
     """The physical `__date:*` coordinate a field aligns on (from ``describe_field(canon).aligns_on``),
     or None when PIT is off, the field is naive, or the source didn't actually emit the column."""
@@ -232,14 +271,17 @@ def _coord_for(src, canon: str, panel_cols, pit_naive: bool) -> str | None:
 
 
 def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
-                   entities: list[str] | None = None) -> pl.DataFrame:
+                   entities: list[str] | None = None,
+                   align_overrides: dict | None = None) -> pl.DataFrame:
     """Load the configured sources, assign each requested field to its first provider
     (precedence), align every source panel to the target frequency, and merge on
     ``(entity, time)``. `target_freq` is the model's ``at`` frequency (else the finest
     referenced). `entities` is the candidate entity universe to scope the fetch to; it reaches
     a source via ``LoadRequest.entities``, populated only for entity-keyed sources (a
-    country-keyed source gets ``None`` and uses its own set). A lone source with no explicit
-    target is used at its native frequency.
+    country-keyed source gets ``None`` and uses its own set). `align_overrides` maps a physical
+    field column to an `@ align(expr)` AST that overrides that field's alignment coordinate
+    (see :func:`_compile_align`). A lone source with no explicit target is used at its native
+    frequency.
     """
     # sources are constructed once per run and shared by the bridge pre-scan and the load
     # loop (adapters may open sessions or set identities in __init__); all closed at the end.
@@ -252,14 +294,14 @@ def load_panel_for(config: Config, fields: set[str], target_freq: str | None = N
         return _srcs[sname]
 
     try:
-        return _load_panel(config, fields, target_freq, entities, _get_src)
+        return _load_panel(config, fields, target_freq, entities, _get_src, align_overrides or {})
     finally:
         for s in _srcs.values():
             s.close()
 
 
 def _load_panel(config: Config, fields: set[str], target_freq: str | None,
-                entities: list[str] | None, _get_src) -> pl.DataFrame:
+                entities: list[str] | None, _get_src, align_overrides: dict) -> pl.DataFrame:
     # a country-keyed (foreign-dimension) source needs its bridge meta field (meta.country)
     # loaded too, even though the model never names it - inject it (bare, canonical).
     bases = {fieldname.split_pin(f)[0] for f in fields}
@@ -307,14 +349,40 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
             regular = sorted(((c, fin) for c, fin, ent in items if ent is None), key=lambda a: a[1])
             if regular:
                 proj = [pl.col(c).alias(fin) for c, fin in regular]
-                coord_map, date_cols = {}, []
+                coord_map = {}
                 for c, fin in regular:
                     dc = _coord_for(src, c, panel.columns, pit_naive)
                     if dc:
                         coord_map[fin] = dc
-                        if dc not in date_cols:
-                            date_cols.append(dc)
+                # carried date columns: the resolved coordinates, plus (only for an @align expr)
+                # the source date columns that expr actually references - carrying unused date
+                # columns would emit spurious W-PIT-PARTIAL noise for their nulls.
+                has_override = not pit_naive and any(fin in align_overrides for _, fin in regular)
+                resolved = list(dict.fromkeys(coord_map[fin] for _, fin in regular if fin in coord_map))
+                src_dates = {c for c in panel.columns if is_date_col(c)}
+                referenced = set()
+                if has_override:
+                    for _, fin in regular:
+                        if fin in align_overrides:
+                            referenced |= _align_date_refs(align_overrides[fin])
+                date_cols = list(dict.fromkeys([*resolved, *sorted(referenced & src_dates)]))
                 keep = panel.select([ENTITY_COL, TIME_COL, *proj, *[pl.col(d) for d in date_cols]])
+                if has_override:  # materialize a derived coordinate per @align-overridden field
+                    keep = keep.with_columns(
+                        [_compile_align(align_overrides[fin], src_dates).alias(date_col(f"__align__{fin}"))
+                         for _, fin in regular if fin in align_overrides])
+                    for _, fin in regular:
+                        if fin not in align_overrides:
+                            continue
+                        dcol = date_col(f"__align__{fin}")
+                        if not _is_temporal_dtype(keep.schema[dcol]):
+                            raise ConfigError(
+                                f"E-ALIGN-DTYPE @align for '{fin}' must yield a datetime coordinate, "
+                                f"got {keep.schema[dcol]}")
+                        coord_map[fin] = dcol
+                    keep = keep.with_columns(
+                        [pl.col(coord_map[fin]).cast(CANON_TIME) for _, fin in regular
+                         if fin in align_overrides and keep.schema[coord_map[fin]] != CANON_TIME])
                 loaded.append(LoadedPanel(keep, fetch, _source_dim(src), coord_map))
             # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
             # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the

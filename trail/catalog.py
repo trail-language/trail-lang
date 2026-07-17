@@ -105,7 +105,6 @@ def _source_detail(name: str, spec) -> CatalogResult:
     inline rather than raised, so discovery stays usable without a live connection.
     """
     from trail.registry import resolve_driver
-    from trail.source import SupportsCapabilities, SupportsDiscovery
 
     rows: list[tuple[str, str]] = [("driver", spec.driver), ("options", str(spec.options))]
     try:
@@ -114,33 +113,29 @@ def _source_detail(name: str, spec) -> CatalogResult:
         rows.append(("discovery", f"unavailable ({e})"))
         return _kv(f"Source {name}", rows)
     try:
-        if isinstance(src, SupportsCapabilities):
-            caps = src.capabilities()
-            rows.append(("frequency", caps.frequency))
-            if caps.frequencies:
-                rows.append(("frequencies", ", ".join(caps.frequencies)))
-            if caps.entity_dim != "entity":
-                rows.append(("entity_dim", f"{caps.entity_dim} (remapped onto entities via a bridge field)"))
-            if caps.period_range:
-                rows.append(("period_range", f"{caps.period_range[0]}..{caps.period_range[1]}"))
-            if caps.provenance:
-                rows.append(("provenance", caps.provenance))
-        if isinstance(src, SupportsDiscovery):
-            avail = src.available_fields()
-            all_fields = active_schema()
-            ns = {f.split(".", 1)[0] for f in avail}
-            relevant = {c for c in all_fields if c.split(".", 1)[0] in ns}
-            rows.append(("provides",
-                         f"{len(avail & relevant)}/{len(relevant)} fields in [{', '.join(sorted(ns))}]"))
-            missing = sorted(relevant - avail)
-            if missing:
-                rows.append(("unavailable_fields", ", ".join(missing)))
-                for f in missing:  # a source may explain WHY (edgar: "no market data in filings")
-                    info = src.describe_field(f)
-                    if info is not None and info.note:
-                        rows.append((f"  {f}", info.note))
-        else:
-            rows.append(("discovery", "not supported (core-tier source)"))
+        caps = src.capabilities()
+        rows.append(("frequency", caps.frequency))
+        if caps.frequencies:
+            rows.append(("frequencies", ", ".join(caps.frequencies)))
+        if caps.entity_dim != "entity":
+            rows.append(("entity_dim", f"{caps.entity_dim} (remapped onto entities via a bridge field)"))
+        if caps.period_range:
+            rows.append(("period_range", f"{caps.period_range[0]}..{caps.period_range[1]}"))
+        if caps.provenance:
+            rows.append(("provenance", caps.provenance))
+        avail = src.available_fields()
+        all_fields = active_schema()
+        ns = {f.split(".", 1)[0] for f in avail}
+        relevant = {c for c in all_fields if c.split(".", 1)[0] in ns}
+        rows.append(("provides",
+                     f"{len(avail & relevant)}/{len(relevant)} fields in [{', '.join(sorted(ns))}]"))
+        missing = sorted(relevant - avail)
+        if missing:
+            rows.append(("unavailable_fields", ", ".join(missing)))
+            for f in missing:  # a source may explain WHY (edgar: "no market data in filings")
+                info = src.describe_field(f)
+                if info is not None and info.note:
+                    rows.append((f"  {f}", info.note))
     finally:
         try:
             src.close()

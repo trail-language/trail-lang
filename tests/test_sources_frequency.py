@@ -147,10 +147,12 @@ def test_miswired_multifreq_source_raises_on_nondefault(monkeypatch):
         sources.load_panel_for(_cfg(), {"quarterly.income.revenue"}, target_freq="quarterly")
 
 
-def test_miswired_source_bare_default_still_works(monkeypatch):
-    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)  # default (annual) needs no kwarg
-    panel = sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
-    assert panel.to_dicts()[0]["income.revenue"] == 100.0
+def test_miswired_source_fails_fast_even_on_default(monkeypatch):
+    # a multi-frequency declaration without a named frequency= param is a contract lie;
+    # fail at first use rather than hide the mis-wiring until a non-default request
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _MisWired)
+    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
+        sources.load_panel_for(_cfg(), {"income.revenue"}, target_freq="annual")
 
 
 class _EntityAnnual(ExtendedDataSource):
@@ -233,3 +235,33 @@ def test_qualified_field_routed_to_country_source_injects_bridge(monkeypatch):
     row = {r["entity"]: r for r in panel.iter_rows(named=True)}["AAA"]
     assert row["income.revenue"] == 10.0            # entity source (annual, upsampled)
     assert row["quarterly.income.revenue"] == 250.0  # USA's value remapped onto AAA via meta.country
+
+
+def test_kwargs_only_multifreq_source_rejected(monkeypatch):
+    # **kwargs passes kwarg-detection but can silently swallow frequency= - the named-param
+    # requirement closes the annual-rows-labeled-quarterly hole
+    class _Swallower(_DualFreq):
+        def load(self, fields, **kwargs):  # no named frequency param
+            return _DualFreq.load(self, fields, frequency="annual")
+
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _Swallower)
+    with pytest.raises(ConfigError, match="E-FREQ-UNWIRED"):
+        sources.load_panel_for(_cfg(), {"quarterly.income.revenue"}, target_freq="quarterly")
+
+
+def test_at_omitted_resolves_to_finest_referenced(monkeypatch):
+    # spec §4.4: no `at` (target_freq None) -> the finest referenced frequency, not annual
+    monkeypatch.setattr(sources, "resolve_driver", lambda ref: _PerFreqAvail)
+    panel = sources.load_panel_for(
+        _cfg(), {"income.revenue", "daily.price.adj_close"}, target_freq=None)
+    # two fetch units (annual + daily) -> aligned to the finest (daily), not annual
+    assert "daily.price.adj_close" in panel.columns
+    assert panel.height >= 1
+
+
+def test_parser_at_omitted_is_none():
+    from trail.parser import parse_program
+
+    prog = parse_program("model m { export r = income.revenue }")
+    m = prog.decls[0]
+    assert m.frequency is None  # was hardcoded "annual"; None = finest referenced

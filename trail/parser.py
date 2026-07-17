@@ -145,7 +145,7 @@ class _T(Transformer):
         name = s[0].value
         idx = 1
         universe = None
-        frequency = "annual"
+        frequency = None  # omitted `at` -> finest referenced (resolved at load)
         if idx < len(s) and isinstance(s[idx], Token) and s[idx].type == "NAME":
             universe = s[idx].value
             idx += 1
@@ -166,7 +166,7 @@ class _T(Transformer):
         name = s[0].value
         idx = 1
         universe = None
-        frequency = "annual"
+        frequency = None  # omitted `at` -> finest referenced (resolved at load)
         if idx < len(s) - 1 and isinstance(s[idx], Token) and s[idx].type == "NAME":
             universe = s[idx].value
             idx += 1

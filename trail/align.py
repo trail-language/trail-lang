@@ -205,6 +205,14 @@ def align_and_merge(loaded: list[tuple], target_freq: str) -> pl.DataFrame:
 
     pe = _period_end(target_freq)
     native = [p for p, f in canonical if _finer_or_equal(f, target_freq)]
+    if not native and canonical:
+        finest_avail = finest([f for _, f in canonical])
+        warnings.warn(
+            f"W-GRID-COARSER no source natively populates target frequency '{target_freq}'; "
+            f"the grid is {finest_avail} rows wearing {target_freq} bucket labels - one step of "
+            f"lag()/roll_*() is one {finest_avail} period, not one {target_freq} period",
+            AlignmentWarning, stacklevel=2,
+        )
     grid_src = native or [p for p, _ in canonical]  # coarser real-entity sources still define a grid
     if not grid_src:  # every source is a global broadcast: nothing to broadcast onto
         raise ConfigError(

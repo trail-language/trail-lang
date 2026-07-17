@@ -1,10 +1,15 @@
 """trail.yaml loading and validation. Normative schema: docs/reference.md §10."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+#: a source name is used verbatim as a `#source` column-name tag (see trail.fieldname), so it must
+#: not contain the codec's delimiters (`.`/`@`/`#`) or the tag would be ambiguous.
+_SOURCE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ConfigError(Exception):
@@ -30,6 +35,16 @@ class Config:
     #: where a source supplies one (lookahead-safe); "naive" = ignore coordinates and place every
     #: value at its period-end (pure fundamental analysis). A source may also set options.pit.
     pit: str = "auto"
+
+    def __post_init__(self) -> None:
+        # a source name is a verbatim `#source` column tag, so guard it on EVERY construction
+        # (load_config and programmatic), not just the YAML path.
+        for name in self.sources:
+            if not _SOURCE_NAME_RE.match(name):
+                raise ConfigError(
+                    f"E-SOURCE-NAME source name {name!r} is invalid; a source name must match "
+                    f"[A-Za-z0-9_-]+ (no '.', '@', or '#') so the #source column tag stays unambiguous"
+                )
 
 
 DEFAULT_CONFIG = Config(

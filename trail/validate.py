@@ -4,31 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from trail import ast
-from trail.ops import _AGG, FREQ_DUR
+from trail.ops import _AGG, FREQ_DUR, OPS
 from trail.schema import is_field, kind_of
 
 _AGG_NAMES = frozenset(_AGG)
 _FREQ_NAMES = frozenset(FREQ_DUR)
 _TO_FUNCS = frozenset({"to_annual", "to_quarterly", "to_monthly", "to_daily"})
 
-# name -> (min_args, max_args) counting positional args only; kwargs checked by name.
-KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
-    "lag": (2, 2), "roll_mean": (2, 2), "roll_sum": (2, 2), "roll_std": (2, 2),
-    "roll_var": (2, 2), "roll_max": (2, 2), "roll_min": (2, 2), "roll_quantile": (3, 3),
-    "roll_median": (2, 2), "roll_skew": (2, 2),
-    "ewm_mean": (2, 2), "ewm_std": (2, 2), "decay_linear": (2, 2), "resample": (3, 3),
-    "asof": (1, 1), "ttm": (1, 1), "trailing": (2, 2),
-    "to_annual": (1, 2), "to_quarterly": (1, 2), "to_monthly": (1, 2), "to_daily": (1, 2),
-    "cummax": (1, 1), "cumsum": (1, 1), "cumprod": (1, 1), "cummin": (1, 1),
-    "zscore": (1, 1), "rank": (1, 1), "winsorize": (2, 2),
-    "xs_mean": (1, 1), "xs_median": (1, 1), "xs_sum": (1, 1), "xs_frac": (1, 1),
-    "xs_std": (1, 1), "xs_var": (1, 1), "xs_min": (1, 1), "xs_max": (1, 1),
-    "xs_count": (1, 1), "xs_quantile": (2, 2),
-    "count": (1, 99), "sqrt": (1, 1), "abs": (1, 1), "log": (1, 1), "exp": (1, 1),
-    "sin": (1, 1), "cos": (1, 1), "tan": (1, 1), "asin": (1, 1), "acos": (1, 1), "atan": (1, 1),
-    "floor": (1, 1), "ceil": (1, 1), "round": (1, 1),
-    "clamp": (3, 3), "min": (2, 2), "max": (2, 2), "weighted_score": (0, 0),
-}
+# arities derive from the single function registry (trail.ops.OPS)
+KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {n: (sp.lo, sp.hi) for n, sp in OPS.items()}
 
 
 @dataclass(frozen=True)

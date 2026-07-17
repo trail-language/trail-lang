@@ -4,6 +4,8 @@ The panel is always sorted [ENTITY, TIME]; per-entity ops close over that orderi
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import polars as pl
 
 ENTITY = "entity"
@@ -58,6 +60,78 @@ _AGG = {
     "kurtosis": lambda e: e.kurtosis(),
     "range": lambda e: e.max() - e.min(),
     "change": lambda e: e.last() - e.first(),
+}
+
+class OpSpec(NamedTuple):
+    lo: int
+    hi: int
+    axis: str  # time-series | cross-sectional | elementwise | model
+    summary: str
+
+
+# THE function registry - single source of truth. validate derives arities from it,
+# catalog derives axis/summary. Names marked (desugar) lower in the compiler, not build().
+OPS: dict[str, OpSpec] = {
+    # --- time-series (per entity) ---
+    "lag": OpSpec(2, 2, "time-series", "value n periods earlier (per entity)"),
+    "roll_mean": OpSpec(2, 2, "time-series", "rolling mean over n periods or a duration"),
+    "roll_sum": OpSpec(2, 2, "time-series", "rolling sum over n periods or a duration"),
+    "roll_std": OpSpec(2, 2, "time-series", "rolling sample std (ddof=1) over n periods"),
+    "roll_var": OpSpec(2, 2, "time-series", "rolling sample variance over n periods"),
+    "roll_max": OpSpec(2, 2, "time-series", "rolling max over n periods"),
+    "roll_min": OpSpec(2, 2, "time-series", "rolling min over n periods"),
+    "roll_quantile": OpSpec(3, 3, "time-series", "rolling q-quantile (historical VaR)"),
+    "roll_median": OpSpec(2, 2, "time-series", "rolling median over n periods"),
+    "roll_skew": OpSpec(2, 2, "time-series", "rolling skewness over n periods"),
+    "ewm_mean": OpSpec(2, 2, "time-series", "exponentially-weighted mean (span)"),
+    "ewm_std": OpSpec(2, 2, "time-series", "exponentially-weighted std (span)"),
+    "decay_linear": OpSpec(2, 2, "time-series", "linearly-decayed weighted mean over n periods"),
+    "resample": OpSpec(3, 3, "time-series", "downsample to a frequency by an aggregation, broadcast back"),
+    "asof": OpSpec(1, 1, "time-series", "carry the last known value forward over gaps (per entity)"),
+    "ttm": OpSpec(1, 1, "time-series", "trailing twelve months, kind-aware (flow sums, stock is last-known) (desugar)"),
+    "trailing": OpSpec(2, 2, "time-series", "trailing duration window, kind-aware (desugar)"),
+    "to_annual": OpSpec(1, 2, "time-series", "resample to annual; aggregation defaults by kind (desugar)"),
+    "to_quarterly": OpSpec(1, 2, "time-series", "resample to quarterly; aggregation defaults by kind (desugar)"),
+    "to_monthly": OpSpec(1, 2, "time-series", "resample to monthly; aggregation defaults by kind (desugar)"),
+    "to_daily": OpSpec(1, 2, "time-series", "resample to daily; aggregation defaults by kind (desugar)"),
+    "cummax": OpSpec(1, 1, "time-series", "expanding maximum"),
+    "cumsum": OpSpec(1, 1, "time-series", "expanding sum (discrete integral)"),
+    "cumprod": OpSpec(1, 1, "time-series", "expanding product (compounding)"),
+    "cummin": OpSpec(1, 1, "time-series", "expanding minimum"),
+    # --- cross-sectional (per period[, group]) ---
+    "zscore": OpSpec(1, 1, "cross-sectional", "standardize within (period[, group])"),
+    "rank": OpSpec(1, 1, "cross-sectional", "average-tie rank, ascending, within group"),
+    "winsorize": OpSpec(2, 2, "cross-sectional", "clip to [p, 1-p] group quantiles"),
+    "xs_mean": OpSpec(1, 1, "cross-sectional", "group mean, broadcast back to members"),
+    "xs_median": OpSpec(1, 1, "cross-sectional", "group median, broadcast back"),
+    "xs_sum": OpSpec(1, 1, "cross-sectional", "group sum, broadcast back"),
+    "xs_frac": OpSpec(1, 1, "cross-sectional", "fraction of group where cond is true"),
+    "xs_std": OpSpec(1, 1, "cross-sectional", "group sample std (ddof=1)"),
+    "xs_var": OpSpec(1, 1, "cross-sectional", "group sample variance"),
+    "xs_min": OpSpec(1, 1, "cross-sectional", "group minimum, broadcast back"),
+    "xs_max": OpSpec(1, 1, "cross-sectional", "group maximum, broadcast back"),
+    "xs_count": OpSpec(1, 1, "cross-sectional", "non-null count in group"),
+    "xs_quantile": OpSpec(2, 2, "cross-sectional", "group q-quantile, broadcast back"),
+    # --- elementwise / scalar ---
+    "count": OpSpec(1, 99, "elementwise", "sum of boolean flags as integers"),
+    "sqrt": OpSpec(1, 1, "elementwise", "square root (null for x<0)"),
+    "abs": OpSpec(1, 1, "elementwise", "absolute value"),
+    "log": OpSpec(1, 1, "elementwise", "natural log (null for x<=0)"),
+    "exp": OpSpec(1, 1, "elementwise", "e ** x"),
+    "sin": OpSpec(1, 1, "elementwise", "sine (radians)"),
+    "cos": OpSpec(1, 1, "elementwise", "cosine (radians)"),
+    "tan": OpSpec(1, 1, "elementwise", "tangent (radians)"),
+    "asin": OpSpec(1, 1, "elementwise", "arcsine"),
+    "acos": OpSpec(1, 1, "elementwise", "arccosine"),
+    "atan": OpSpec(1, 1, "elementwise", "arctangent"),
+    "floor": OpSpec(1, 1, "elementwise", "round down to integer"),
+    "ceil": OpSpec(1, 1, "elementwise", "round up to integer"),
+    "round": OpSpec(1, 1, "elementwise", "round to nearest integer"),
+    "clamp": OpSpec(3, 3, "elementwise", "clip x to [lo, hi]"),
+    "min": OpSpec(2, 2, "elementwise", "cell-wise min of two panels"),
+    "max": OpSpec(2, 2, "elementwise", "cell-wise max of two panels"),
+    # --- model axis ---
+    "weighted_score": OpSpec(0, 0, "model", "weighted rollup of the model's score blocks (desugar)"),
 }
 
 _ROLL = {

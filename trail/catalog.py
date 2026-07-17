@@ -11,6 +11,8 @@ from functools import lru_cache
 
 import polars as pl
 
+from trail.ops import OPS
+
 from trail import ast
 from trail.config import DEFAULT_CONFIG, Config
 from trail.schema import active_schema
@@ -28,58 +30,8 @@ def _stdlib_functions() -> dict[str, int]:
     funcs = collect_functions(parse_program(stdlib_source()))
     return {name: len(fd.params) for name, fd in funcs.items() if not name.startswith("_")}
 
-# function -> (axis, one-line summary). Axis mirrors reference §7.
-_FUNC_META: dict[str, tuple[str, str]] = {
-    "lag": ("time-series", "value n periods earlier (per entity)"),
-    "roll_mean": ("time-series", "rolling mean over n periods"),
-    "roll_sum": ("time-series", "rolling sum over n periods"),
-    "roll_std": ("time-series", "rolling sample std (ddof=1) over n periods"),
-    "roll_var": ("time-series", "rolling sample variance over n periods"),
-    "roll_max": ("time-series", "rolling max over n periods"),
-    "roll_min": ("time-series", "rolling min over n periods"),
-    "roll_quantile": ("time-series", "rolling q-quantile (historical VaR)"),
-    "cummax": ("time-series", "expanding maximum"),
-    "cumsum": ("time-series", "expanding sum (discrete integral)"),
-    "cumprod": ("time-series", "expanding product (compounding)"),
-    "cummin": ("time-series", "expanding minimum"),
-    "roll_median": ("time-series", "rolling median over n periods"),
-    "roll_skew": ("time-series", "rolling skewness over n periods"),
-    "ewm_mean": ("time-series", "exponentially-weighted mean (span)"),
-    "ewm_std": ("time-series", "exponentially-weighted std (span)"),
-    "decay_linear": ("time-series", "linearly-decayed weighted mean over n periods"),
-    "resample": ("time-series", "downsample to a frequency by an aggregation, broadcast back"),
-    "zscore": ("cross-sectional", "standardize within (period[, group])"),
-    "rank": ("cross-sectional", "average-tie rank, ascending, within group"),
-    "winsorize": ("cross-sectional", "clip to [p, 1-p] group quantiles"),
-    "xs_mean": ("cross-sectional", "group mean, broadcast back to members"),
-    "xs_median": ("cross-sectional", "group median, broadcast back"),
-    "xs_sum": ("cross-sectional", "group sum, broadcast back"),
-    "xs_frac": ("cross-sectional", "fraction of group where cond is true"),
-    "xs_std": ("cross-sectional", "group sample std (ddof=1)"),
-    "xs_var": ("cross-sectional", "group sample variance"),
-    "xs_min": ("cross-sectional", "group minimum, broadcast back"),
-    "xs_max": ("cross-sectional", "group maximum, broadcast back"),
-    "xs_count": ("cross-sectional", "non-null count in group"),
-    "xs_quantile": ("cross-sectional", "group q-quantile, broadcast back"),
-    "count": ("elementwise", "sum of boolean flags as integers"),
-    "sqrt": ("elementwise", "square root (null for x<0)"),
-    "abs": ("elementwise", "absolute value"),
-    "log": ("elementwise", "natural log (null for x<=0)"),
-    "exp": ("elementwise", "e ** x"),
-    "sin": ("elementwise", "sine (radians)"),
-    "cos": ("elementwise", "cosine (radians)"),
-    "tan": ("elementwise", "tangent (radians)"),
-    "asin": ("elementwise", "arcsine"),
-    "acos": ("elementwise", "arccosine"),
-    "atan": ("elementwise", "arctangent"),
-    "floor": ("elementwise", "round down to integer"),
-    "ceil": ("elementwise", "round up to integer"),
-    "round": ("elementwise", "round to nearest integer"),
-    "clamp": ("elementwise", "clip x to [lo, hi]"),
-    "min": ("elementwise", "cell-wise min of two panels"),
-    "max": ("elementwise", "cell-wise max of two panels"),
-    "weighted_score": ("model", "weighted rollup of the model's score blocks"),
-}
+# axis/summary derive from the single function registry (trail.ops.OPS)
+_FUNC_META: dict[str, tuple[str, str]] = {n: (sp.axis, sp.summary) for n, sp in OPS.items()}
 
 
 @dataclass(frozen=True)

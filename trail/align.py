@@ -18,6 +18,7 @@ import warnings
 import polars as pl
 
 from trail.ast import FREQUENCIES
+from trail import fieldname
 from trail.config import ConfigError
 from trail.ops import _AGG, AGG_FOR_KIND, FREQ_DUR
 from trail.schema import kind_of
@@ -27,12 +28,7 @@ from trail.source import BROADCAST_ENTITY, ENTITY_COL, TIME_COL
 FREQ_ORDER = list(FREQUENCIES)
 
 
-def _canonical(col: str) -> str:
-    """Strip the entity-pin suffix and frequency prefix from a physical column so kind lookup
-    uses the canonical field (daily.price.adj_close@SPY -> price.adj_close)."""
-    base = col.split("@", 1)[0]
-    head, _, rest = base.partition(".")
-    return rest if head in FREQ_ORDER and rest.count(".") >= 1 else base
+_canonical = fieldname.canonical  # strip qualifiers for kind lookup (see trail.fieldname)
 
 # kinds whose per-period value must not be repeated onto a finer grid (a total/return mis-scales).
 _UPSAMPLE_UNSAFE = {"flow", "return", "per_share"}

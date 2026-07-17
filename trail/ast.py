@@ -14,10 +14,9 @@ class NameRef:
     name: str
 
 
-# frequency ladder, coarse -> fine; the single source of truth shared by the parser, the
-# loader's frequency split, and align's canonicalization/ordering.
-FREQUENCIES = ("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute")
-_FREQUENCIES = frozenset(FREQUENCIES)
+# the frequency ladder + column-name codec live in trail.fieldname; re-exported here for the
+# many importers that reach for the ladder via trail.ast.
+from trail.fieldname import FREQUENCIES, _FREQUENCIES, qualified as _qualified  # noqa: F401,E402
 
 
 @dataclass(frozen=True)
@@ -34,10 +33,8 @@ class FieldRef:
 
     @property
     def qualified_column(self) -> str:
-        """Physical panel/polars column name: frequency-prefixed and entity-suffixed
-        when qualified (daily.price.adj_close@SPY)."""
-        base = f"{self.frequency}.{self.column}" if self.frequency else self.column
-        return f"{base}@{self.entity}" if self.entity else base
+        """Physical panel/polars column name (see trail.fieldname)."""
+        return _qualified(self.column, frequency=self.frequency, entity=self.entity)
 
 
 @dataclass(frozen=True)

@@ -154,7 +154,10 @@ class _CountryDual(DataSource):
         }).with_columns(pl.col("time").cast(pl.Datetime("us")))
 
     def available_fields(self, frequency=None):
-        return {"income.revenue"}
+        # only the quarterly frame (the country source's raison d'etre here); the bare/annual
+        # frame is the entity source's job. Keeping annual empty avoids an incidental cross-
+        # dimension coalesce of the entity-served bare income.revenue (E-COALESCE-DIM-MIXED).
+        return {"income.revenue"} if frequency == "quarterly" else set()
 
     def describe_field(self, field):
         return None

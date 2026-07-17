@@ -54,12 +54,13 @@ def test_deps_surface_pinned_column():
     assert fields == frozenset({"price.adj_close", "price.adj_close@SPY"})
 
 
-def test_validate_entity_pin_is_legal_source_pin_is_not():
+def test_validate_entity_and_source_pins_are_both_legal():
     codes = [i.code for i in validate(parse_program(
         'model m { export x = price.adj_close @ entity("SPY") }'))]
     assert "E-PIN-UNSUPPORTED" not in codes and "E-FIELD-UNKNOWN" not in codes
+    # a `@ source` pin is live now: no static rejection (source existence is a loader check)
     codes = [i.code for i in validate(parse_program("model m { export x = price.adj_close @ fmp }"))]
-    assert "E-PIN-UNSUPPORTED" in codes
+    assert "E-PIN-UNSUPPORTED" not in codes and "E-FIELD-UNKNOWN" not in codes
     codes = [i.code for i in validate(parse_program(
         'model m { export x = bogus.field @ entity("SPY") }'))]
     assert "E-FIELD-UNKNOWN" in codes  # canonical base still validated

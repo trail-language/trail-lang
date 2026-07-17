@@ -100,9 +100,8 @@ def _check_expr(e, defined: set[str], out: list[Issue]) -> None:
         case ast.FieldRef():
             if not is_field(e.column):
                 out.append(Issue("error", "E-FIELD-UNKNOWN", f"unknown field '{e.column}'"))
-            if e.source is not None:
-                out.append(Issue("error", "E-PIN-UNSUPPORTED",
-                                 f"source pin '@ {e.source}' is not supported in this phase"))
+            # a `@ source` pin is live (per-cell coalescing phase); its source-name existence is
+            # config-dependent, so it is validated in the loader (E-PIN-SOURCE-UNKNOWN), not here.
             if e.align is not None:
                 _check_align(e.align, out)
         case ast.NameRef():

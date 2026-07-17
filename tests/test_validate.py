@@ -39,8 +39,11 @@ def test_undefined_name():
     assert codes("model m { b = 1\n a = b + 1 }") == []
 
 
-def test_pin_rejected():
-    assert "E-PIN-UNSUPPORTED" in codes("model m { a = income.revenue @ fmp }")
+def test_source_pin_is_no_longer_a_validation_error():
+    # `@ source` pins are live (per-cell coalescing phase); source-name existence is a loader
+    # (config-dependent) check now, not a static validation error.
+    cs = codes("model m { a = income.revenue @ fmp }")
+    assert "E-PIN-UNSUPPORTED" not in cs and "E-FIELD-UNKNOWN" not in cs
 
 
 def test_score_non_literal_value_is_parse_error():

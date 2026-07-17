@@ -15,11 +15,19 @@ FREQUENCIES: tuple[str, ...] = ("annual", "quarterly", "monthly", "weekly", "dai
 _FREQUENCIES = frozenset(FREQUENCIES)
 
 
-def qualified(canonical: str, *, frequency: str | None = None, entity: str | None = None) -> str:
+def qualified(canonical: str, *, frequency: str | None = None, entity: str | None = None,
+              source: str | None = None) -> str:
     """Encode a canonical field plus qualifiers into the physical column name
-    (daily.price.adj_close@SPY)."""
+    (daily.price.adj_close@SPY, annual.income.revenue#edgar). The entity pin (`@`) and the
+    source pin (`#`) are mutually exclusive - a reference pins one axis, never both."""
+    if entity is not None and source is not None:
+        raise ValueError("a field reference cannot pin both an entity (@) and a source (#)")
     base = f"{frequency}.{canonical}" if frequency else canonical
-    return f"{base}@{entity}" if entity else base
+    if entity:
+        return f"{base}@{entity}"
+    if source:
+        return f"{base}#{source}"
+    return base
 
 
 def parse_ref(names: tuple[str, ...]) -> tuple[str | None, tuple[str, ...]]:
@@ -44,8 +52,19 @@ def split_pin(column: str) -> tuple[str, str | None]:
     return base, (ent if sep else None)
 
 
+def split_source(column: str) -> tuple[str, str | None]:
+    """(base, source | None) from a possibly source-pinned/tagged column (x#edgar -> x, edgar).
+
+    A `#source` qualifier tags the physical column of a field served from one specific source -
+    both an explicit `@ source` pin and a coalescing intermediate share this one encoding."""
+    base, sep, src = column.partition("#")
+    return base, (src if sep else None)
+
+
 def canonical(column: str) -> str:
-    """Strip every qualifier (pin suffix + frequency prefix) to the canonical field, for
-    schema/kind lookup: daily.price.adj_close@SPY -> price.adj_close."""
-    base = split_pin(column)[0]
+    """Strip every qualifier (pin/source suffix + frequency prefix) to the canonical field, for
+    schema/kind lookup: daily.price.adj_close@SPY -> price.adj_close, income.revenue#edgar ->
+    income.revenue. HIGHEST-severity for align: a `#source` tag that leaks here would resolve the
+    wrong kind (summing a stock/ratio tag instead of taking its last)."""
+    base = split_source(split_pin(column)[0])[0]
     return split_frequency(base)[1]

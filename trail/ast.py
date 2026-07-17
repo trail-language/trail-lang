@@ -35,7 +35,8 @@ class FieldRef:
     @property
     def qualified_column(self) -> str:
         """Physical panel/polars column name (see trail.fieldname)."""
-        return _qualified(self.column, frequency=self.frequency, entity=self.entity)
+        return _qualified(self.column, frequency=self.frequency, entity=self.entity,
+                          source=self.source)
 
 
 @dataclass(frozen=True)

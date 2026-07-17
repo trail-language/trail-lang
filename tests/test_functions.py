@@ -87,3 +87,15 @@ def test_stdlib_core_functions():
     )
     assert res["gm"].to_list() == pytest.approx([0.45] * 48)          # fixture: gross_profit = 0.45*rev
     assert res["cr"].to_list() == pytest.approx([0.8 / 0.5] * 48)     # current_assets 0.8*rev / cl 0.5*rev
+
+
+def test_time_atom_and_year_extractor():
+    # `time` is a referenceable panel atom; year() extracts its calendar year
+    res = _compile("model m { export yr = year(time) }")
+    assert _first(res, "yr") == 2017  # AAA's first period-end is FY2017
+
+
+def test_time_atom_passes_validation():
+    from trail.validate import validate
+    codes = {i.code for i in validate(prepare("model m { export yr = year(time) }"))}
+    assert "E-NAME-UNDEFINED" not in codes

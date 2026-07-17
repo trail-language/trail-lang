@@ -34,3 +34,38 @@ def test_cummax_primitive():
 
 # yoy/avg2/cagr/increase/drawdown are now DERIVED macros (stdlib/timeseries.trail),
 # tested in tests/test_timeseries.py against known values.
+
+
+# --- temporal operators (calendar extraction / arithmetic on datetimes) ---
+import datetime as _dt  # noqa: E402
+
+_TS = pl.DataFrame({
+    "a": [_dt.datetime(2023, 2, 15, 10), _dt.datetime(2023, 11, 30)],
+    "b": [_dt.datetime(2023, 2, 10), _dt.datetime(2022, 11, 30)],
+})
+
+
+def _tcol(name, args):
+    return _TS.with_columns(build(name, args, {}, None).alias("o"))["o"].to_list()
+
+
+def test_temporal_extractors():
+    assert _tcol("year", [pl.col("a")]) == [2023, 2023]
+    assert _tcol("month", [pl.col("a")]) == [2, 11]
+    assert _tcol("quarter", [pl.col("a")]) == [1, 4]
+    assert _tcol("day", [pl.col("a")]) == [15, 30]
+
+
+def test_truncate_to_bucket():
+    assert _tcol("truncate", [pl.col("a"), "1y"]) == [_dt.datetime(2023, 1, 1), _dt.datetime(2023, 1, 1)]
+    assert _tcol("truncate", [pl.col("a"), "1mo"]) == [_dt.datetime(2023, 2, 1), _dt.datetime(2023, 11, 1)]
+
+
+def test_datediff_days_default_and_hours():
+    assert _tcol("datediff", [pl.col("a"), pl.col("b")]) == [5, 365]  # whole days (5d10h -> 5)
+    assert _tcol("datediff", [pl.col("a"), pl.col("b"), "hours"])[0] == 5 * 24 + 10
+
+
+def test_datediff_rejects_unknown_unit():
+    with pytest.raises(ValueError, match="datediff unit"):
+        build("datediff", [pl.col("a"), pl.col("b"), "fortnights"], {}, None)

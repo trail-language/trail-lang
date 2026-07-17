@@ -130,6 +130,13 @@ OPS: dict[str, OpSpec] = {
     "clamp": OpSpec(3, 3, "elementwise", "clip x to [lo, hi]"),
     "min": OpSpec(2, 2, "elementwise", "cell-wise min of two panels"),
     "max": OpSpec(2, 2, "elementwise", "cell-wise max of two panels"),
+    # --- temporal (calendar extraction / arithmetic on a datetime, e.g. time or a date column) ---
+    "year": OpSpec(1, 1, "elementwise", "calendar year of a datetime"),
+    "month": OpSpec(1, 1, "elementwise", "calendar month (1-12) of a datetime"),
+    "quarter": OpSpec(1, 1, "elementwise", "calendar quarter (1-4) of a datetime"),
+    "day": OpSpec(1, 1, "elementwise", "day of month (1-31) of a datetime"),
+    "truncate": OpSpec(2, 2, "elementwise", 'truncate a datetime to a duration bucket (e.g. "1y", "1mo")'),
+    "datediff": OpSpec(2, 3, "elementwise", "whole units between two datetimes (unit days|hours|minutes|seconds, default days)"),
     # --- model axis ---
     "weighted_score": OpSpec(0, 0, "model", "weighted rollup of the model's score blocks (desugar)"),
 }
@@ -248,5 +255,24 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
             return pl.min_horizontal(_x(a[0]), _x(a[1]))
         case "max":
             return pl.max_horizontal(_x(a[0]), _x(a[1]))
+        # --- temporal ---
+        case "year":
+            return _x(a[0]).dt.year()
+        case "month":
+            return _x(a[0]).dt.month()
+        case "quarter":
+            return _x(a[0]).dt.quarter()
+        case "day":
+            return _x(a[0]).dt.day()
+        case "truncate":
+            return _x(a[0]).dt.truncate(a[1])
+        case "datediff":
+            delta = _x(a[0]) - _x(a[1])
+            unit = a[2] if len(a) > 2 else "days"
+            total = {"days": "total_days", "hours": "total_hours",
+                     "minutes": "total_minutes", "seconds": "total_seconds"}.get(unit)
+            if total is None:
+                raise ValueError(f"datediff unit must be days|hours|minutes|seconds, got {unit!r}")
+            return getattr(delta.dt, total)()
         case _:
             raise KeyError(f"no builder for function '{name}'")

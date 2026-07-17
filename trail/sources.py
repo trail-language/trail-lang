@@ -13,12 +13,14 @@ import warnings
 import polars as pl
 
 from trail import fieldname
-from trail.align import _DIM_MAP_COL, AlignmentWarning, align_and_merge, finest, is_broadcast
+from trail.align import (
+    _DIM_MAP_COL, AlignmentWarning, LoadedPanel, align_and_merge, finest, is_broadcast,
+)
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
 from trail.schema import active_schema, kind_of
 from trail.source import (
-    BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, LoadRequest, is_date_col,
+    BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, LoadRequest, date_col, is_date_col,
 )
 
 __all__ = [
@@ -216,6 +218,19 @@ def _claimable(src, requests):
     return out
 
 
+def _coord_for(src, canon: str, panel_cols, pit_naive: bool) -> str | None:
+    """The physical `__date:*` coordinate a field aligns on (from ``describe_field(canon).aligns_on``),
+    or None when PIT is off, the field is naive, or the source didn't actually emit the column."""
+    if pit_naive:
+        return None
+    info = src.describe_field(canon)
+    aligns = info.aligns_on if info is not None else None
+    if not aligns:
+        return None
+    dc = date_col(aligns)
+    return dc if dc in panel_cols else None
+
+
 def load_panel_for(config: Config, fields: set[str], target_freq: str | None = None,
                    entities: list[str] | None = None) -> pl.DataFrame:
     """Load the configured sources, assign each requested field to its first provider
@@ -263,7 +278,7 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
     if entities is not None and pin_entities:
         entities = sorted(set(entities) | pin_entities)
 
-    loaded: list[tuple[pl.DataFrame, str, str]] = []
+    loaded: list[LoadedPanel] = []
     for sname in _source_order(config):
         if not pending:
             break
@@ -276,6 +291,8 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
         # its own dimension, so it uses its configured set, not stock tickers) - loop-invariant.
         req_entities = (tuple(entities)
                         if entities is not None and _source_dim(src) == "entity" else None)
+        # PIT off (globally or per-source) -> no coordinates resolved, every field naive.
+        pit_naive = config.pit == "naive" or src.options.get("pit") == "naive"
         # one fetch per distinct frequency; a bare request fetches the source's default.
         by_fetch: dict[str, list[tuple[str, str, str | None]]] = {}
         for fq, canon, final, ent in claimed:
@@ -285,14 +302,20 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
             request = LoadRequest(fields=frozenset(take), frequency=fetch,
                                   periods=config.periods, entities=req_entities)
             panel = conform_panel(src.load(request), take, strict=config.strict, source_name=sname)
-            # project canonical -> final columns; one fetch feeds bare + qualified aliases.
-            # NOTE: any __date:* coordinates are dropped by this projection today; phase 3
-            # (per-field alignment) will carry the relevant coordinate columns into
-            # align_and_merge before projecting them away.
-            regular = [(c, fin) for c, fin, ent in items if ent is None]
+            # project canonical -> final columns (one fetch feeds bare + qualified aliases), and
+            # carry each field's alignment coordinate (__date:*) so align can place by knowability.
+            regular = sorted(((c, fin) for c, fin, ent in items if ent is None), key=lambda a: a[1])
             if regular:
-                proj = [pl.col(c).alias(fin) for c, fin in sorted(regular, key=lambda a: a[1])]
-                loaded.append((panel.select([ENTITY_COL, TIME_COL, *proj]), fetch, _source_dim(src)))
+                proj = [pl.col(c).alias(fin) for c, fin in regular]
+                coord_map, date_cols = {}, []
+                for c, fin in regular:
+                    dc = _coord_for(src, c, panel.columns, pit_naive)
+                    if dc:
+                        coord_map[fin] = dc
+                        if dc not in date_cols:
+                            date_cols.append(dc)
+                keep = panel.select([ENTITY_COL, TIME_COL, *proj, *[pl.col(d) for d in date_cols]])
+                loaded.append(LoadedPanel(keep, fetch, _source_dim(src), coord_map))
             # an entity pin becomes a synthetic broadcast panel: the pinned entity's series,
             # keyed by the '*' sentinel, so align's broadcast pass replicates it onto the
             # grid (as-of, kind-aware, PIT-safe) exactly like a global series.
@@ -305,9 +328,10 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
                         f"E-ENTITY-UNKNOWN entity '{ent}' has no rows for '{canon}' from "
                         f"source '{sname}'; add it to the source's fetch scope"
                     )
-                pin_panel = (sl.select([TIME_COL, pl.col(canon).alias(final)])
-                             .with_columns(pl.lit(BROADCAST_ENTITY).alias(ENTITY_COL)))
-                loaded.append((pin_panel, fetch, "entity"))
+                dc = _coord_for(src, canon, panel.columns, pit_naive)
+                sel = [TIME_COL, pl.col(canon).alias(final)] + ([pl.col(dc)] if dc else [])
+                pin_panel = sl.select(sel).with_columns(pl.lit(BROADCAST_ENTITY).alias(ENTITY_COL))
+                loaded.append(LoadedPanel(pin_panel, fetch, "entity", {final: dc} if dc else {}))
 
     for fq, canon, final, _ent in pending:  # requests no configured source can serve
         if fq is not None:
@@ -320,10 +344,11 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
     if not loaded:
         raise ConfigError("E-SOURCE-EMPTY no configured source provides the requested fields")
 
-    if len(loaded) == 1 and target_freq is None and not is_broadcast(loaded[0][0]):
-        panel = loaded[0][0]
-    else:  # a lone broadcast source routes here too, so align_and_merge can reject it clearly
-        panel = align_and_merge(loaded, target_freq or finest([f for _, f, _ in loaded]))
+    if (len(loaded) == 1 and target_freq is None and not is_broadcast(loaded[0].panel)
+            and not loaded[0].coord_map):  # naive single source: pass through unchanged
+        panel = loaded[0].panel
+    else:  # PIT single source self-aligns (row-shift); a lone broadcast routes here to be rejected
+        panel = align_and_merge(loaded, target_freq or finest([lp.freq for lp in loaded]))
 
     if config.periods is not None:
         lo, hi = config.periods

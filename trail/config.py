@@ -26,6 +26,10 @@ class Config:
     #: when True, a non-conforming source panel is a hard error (E-SOURCE-PANEL);
     #: when False (default), deviations are warned and coerced (W-SOURCE-PANEL).
     strict: bool = False
+    #: point-in-time placement. "auto" (default) = place each value by its known-date coordinate
+    #: where a source supplies one (lookahead-safe); "naive" = ignore coordinates and place every
+    #: value at its period-end (pure fundamental analysis). A source may also set options.pit.
+    pit: str = "auto"
 
 
 DEFAULT_CONFIG = Config(
@@ -61,4 +65,7 @@ def load_config(path: str | None = None) -> Config:
     p = panel.get("periods")
     periods = (int(p[0]), int(p[1])) if p else None
     strict = bool(panel.get("strict", False))
-    return Config(sources, precedence, periods, strict)
+    pit = str(panel.get("pit", "auto")).lower()
+    if pit not in ("auto", "naive"):
+        raise ConfigError(f"panel.pit must be 'auto' or 'naive', got {pit!r}")
+    return Config(sources, precedence, periods, strict, pit)

@@ -39,10 +39,6 @@ _canonical = fieldname.canonical  # strip qualifiers for kind lookup (see trail.
 # kinds whose per-period value must not be repeated onto a finer grid (a total/return mis-scales).
 _UPSAMPLE_UNSAFE = {"flow", "return", "per_share"}
 
-# a coarse entity dimension -> the grid meta field that maps a canonical entity to that dimension's
-# key. A source keyed by "country" is remapped onto stocks through each stock's meta.country.
-_DIM_MAP_COL = {"country": "meta.country"}
-
 _DECISION = "__decision"  # transient row-shift label column (never leaves align)
 
 
@@ -59,6 +55,9 @@ class LoadedPanel:
     freq: str
     dim: str = "entity"
     coord_map: dict = field(default_factory=dict)
+    #: for a foreign dimension, the bridge meta field mapping an entity to this dim's key
+    #: (from the source's Capabilities.bridge_field). Empty for entity-keyed sources.
+    bridge: str = ""
 
     def coord_of(self, fld: str) -> str:
         """The physical coordinate column for a field, or ``time`` when the field is naive."""
@@ -66,11 +65,13 @@ class LoadedPanel:
 
 
 def _as_loaded(item) -> LoadedPanel:
-    """Accept a LoadedPanel or a legacy ``(panel, freq[, dim])`` tuple (all-naive coord_map)."""
+    """Accept a LoadedPanel or a legacy ``(panel, freq[, dim[, bridge]])`` tuple (naive)."""
     if isinstance(item, LoadedPanel):
         return item
     panel, freq, *rest = item
-    return LoadedPanel(panel, freq, rest[0] if rest else "entity", {})
+    dim = rest[0] if rest else "entity"
+    bridge = rest[1] if len(rest) > 1 else ""
+    return LoadedPanel(panel, freq, dim, {}, bridge)
 
 
 def finest(freqs: list[str]) -> str:
@@ -225,16 +226,18 @@ def _align_broadcast(sub: pl.DataFrame, native: str, target_freq: str, grid: pl.
 
 
 def _align_by_dimension(sub: pl.DataFrame, native: str, target_freq: str,
-                        out: pl.DataFrame, dim: str, coord: str) -> pl.DataFrame:
+                        out: pl.DataFrame, dim: str, bridge: str, coord: str) -> pl.DataFrame:
     """Remap a foreign-dimension source (e.g. country) onto canonical entities.
 
     The source's `entity` column holds the dimension key; `out` carries a bridge meta column
     (meta.country) giving each entity's key. Each entity gets the foreign row for its key,
     time-aligned (as-of for a coarser source). The map lives in the data plane (§5.4).
     """
-    map_col = _DIM_MAP_COL.get(dim)
-    if map_col is None:
-        raise ConfigError(f"E-DIM-UNKNOWN source declares unsupported entity dimension '{dim}'")
+    if not bridge:
+        raise ConfigError(
+            f"E-DIM-NOBRIDGE source keyed by dimension '{dim}' declares no Capabilities.bridge_field; "
+            "it cannot be remapped onto entities")
+    map_col = bridge
     if map_col not in out.columns:
         raise ConfigError(
             f"E-DIM-UNMAPPED a source is keyed by dimension '{dim}' but no entity-bearing source "
@@ -329,5 +332,5 @@ def align_and_merge(loaded: list, target_freq: str) -> pl.DataFrame:
             out = _left_join_fields(out, _align_broadcast(sub, lp.freq, target_freq, grid, coord))
     for lp in foreign:  # pass 3: foreign dimensions need the bridge column present
         for coord, sub in _coord_groups(lp):
-            out = _left_join_fields(out, _align_by_dimension(sub, lp.freq, target_freq, out, lp.dim, coord))
+            out = _left_join_fields(out, _align_by_dimension(sub, lp.freq, target_freq, out, lp.dim, lp.bridge, coord))
     return out.sort([ENTITY_COL, TIME_COL])

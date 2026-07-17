@@ -166,7 +166,8 @@ class _CountryDual(DataSource):
         return ["USA"]
 
     def capabilities(self):
-        return Capabilities(frequency="annual", frequencies=("annual", "quarterly"), entity_dim="country")
+        return Capabilities(frequency="annual", frequencies=("annual", "quarterly"),
+                            entity_dim="country", bridge_field="meta.country")
 
 
 def test_sources_constructed_once_per_run(monkeypatch):

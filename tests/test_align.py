@@ -145,7 +145,7 @@ _GDP = pl.DataFrame({
 
 
 def test_country_dim_remaps_onto_stocks_by_meta_country(gmd_plugin):
-    out = align_and_merge([(_STOCKS, "annual", "entity"), (_GDP, "annual", "country")], "annual")
+    out = align_and_merge([(_STOCKS, "annual", "entity"), (_GDP, "annual", "country", "meta.country")], "annual")
     d = {r["entity"]: r for r in out.iter_rows(named=True)}
     assert d["AAA"]["gmd.gdp"] == 1000.0   # AAA is USA
     assert d["BBB"]["gmd.gdp"] == 500.0    # BBB is CAN
@@ -156,12 +156,12 @@ def test_country_dim_remaps_onto_stocks_by_meta_country(gmd_plugin):
 def test_country_dim_missing_bridge_raises(gmd_plugin):
     with pytest.raises(ConfigError, match="E-DIM-UNMAPPED"):
         align_and_merge([(_STOCKS.drop("meta.country"), "annual", "entity"),
-                         (_GDP, "annual", "country")], "annual")
+                         (_GDP, "annual", "country", "meta.country")], "annual")
 
 
 def test_lone_country_source_is_its_own_entity_axis(gmd_plugin):
     # no entity-keyed source: countries ARE the entities (a country model), not a remap
-    out = align_and_merge([(_GDP, "annual", "country")], "annual").sort("entity")
+    out = align_and_merge([(_GDP, "annual", "country", "meta.country")], "annual").sort("entity")
     assert set(out["entity"].to_list()) == {"USA", "CAN"}
     assert out.filter(pl.col("entity") == "USA")["gmd.gdp"].to_list() == [1000.0]
 
@@ -176,7 +176,7 @@ def test_country_dim_annual_asof_onto_quarterly_stock_grid(gmd_plugin):
         "entity": ["USA", "USA"], "time": [dt.datetime(2022, 12, 31), dt.datetime(2023, 12, 31)],
         "gmd.gdp": [1000.0, 1100.0],
     }).with_columns(pl.col("time").cast(pl.Datetime("us")))
-    out = align_and_merge([(stocks_q, "quarterly", "entity"), (gdp, "annual", "country")], "quarterly").sort("time")
+    out = align_and_merge([(stocks_q, "quarterly", "entity"), (gdp, "annual", "country", "meta.country")], "quarterly").sort("time")
     # FY2022 GDP unknown until its year-end, then carried; FY2023 at 2023-12-31
     assert out["gmd.gdp"].to_list() == [None, None, 1000.0, 1100.0]
 
@@ -201,7 +201,7 @@ def test_multiple_foreign_dims_without_entity_source_raises(gmd_plugin):
         "entity": ["EU"], "time": [dt.datetime(2022, 12, 31)], "other.metric": [5.0],
     }).with_columns(pl.col("time").cast(pl.Datetime("us")))
     with pytest.raises(ConfigError, match="E-DIM-AMBIGUOUS"):
-        align_and_merge([(_GDP, "annual", "country"), (other, "annual", "region")], "annual")
+        align_and_merge([(_GDP, "annual", "country", "meta.country"), (other, "annual", "region")], "annual")
 
 
 def test_broadcast_rides_along_a_promoted_country_axis(monkeypatch):
@@ -213,7 +213,7 @@ def test_broadcast_rides_along_a_promoted_country_axis(monkeypatch):
         "entity": [BROADCAST_ENTITY], "time": [dt.datetime(2022, 12, 31)], "macro.risk_free": [0.02],
     }).with_columns(pl.col("time").cast(pl.Datetime("us")))
     # no entity source: countries become the axis, and the global rate replicates onto each
-    out = align_and_merge([(_GDP, "annual", "country"), (glob, "annual", "entity")], "annual").sort("entity")
+    out = align_and_merge([(_GDP, "annual", "country", "meta.country"), (glob, "annual", "entity")], "annual").sort("entity")
     assert set(out["entity"].to_list()) == {"USA", "CAN"}
     assert out["macro.risk_free"].to_list() == [0.02, 0.02]
     assert set(out["gmd.gdp"].to_list()) == {1000.0, 500.0}
@@ -250,3 +250,10 @@ def test_grid_coarser_than_target_warns():
     # annual-only source at a daily target: the grid keeps annual resolution - warn loudly
     with pytest.warns(AlignmentWarning, match="W-GRID-COARSER"):
         align_and_merge([(_ANNUAL, "annual")], "daily")
+
+
+def test_country_dim_without_declared_bridge_raises(gmd_plugin):
+    # a foreign-dimension panel that carries no bridge (Capabilities.bridge_field) cannot be
+    # remapped onto entities - the engine no longer assumes any dimension's bridge field
+    with pytest.raises(ConfigError, match="E-DIM-NOBRIDGE"):
+        align_and_merge([(_STOCKS, "annual", "entity"), (_GDP, "annual", "country")], "annual")

@@ -156,6 +156,10 @@ class Capabilities:
     #: grid entity; a coarser dimension (e.g. "country") is remapped onto entities at align time
     #: via a bridge meta field. See trail.align.
     entity_dim: str = "entity"
+    #: for a foreign dimension (entity_dim != "entity"), the meta field an entity-keyed source
+    #: provides that maps each entity to this dimension's key (e.g. "meta.country"). The engine
+    #: reads this instead of hardcoding any dimension, so any dimension can bridge generically.
+    bridge_field: str = ""
     #: advisory: whether this source supplies real known-dates (emits ``__date:*`` coordinates).
     #: Catalog/validate warn when a source is naive; the engine keys off the actual columns.
     pit: bool = False

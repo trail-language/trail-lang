@@ -17,7 +17,7 @@ KNOWN_FUNCTIONS: dict[str, tuple[int, int]] = {
     "roll_var": (2, 2), "roll_max": (2, 2), "roll_min": (2, 2), "roll_quantile": (3, 3),
     "roll_median": (2, 2), "roll_skew": (2, 2),
     "ewm_mean": (2, 2), "ewm_std": (2, 2), "decay_linear": (2, 2), "resample": (3, 3),
-    "asof": (1, 1),
+    "asof": (1, 1), "ttm": (1, 1), "trailing": (2, 2),
     "to_annual": (1, 2), "to_quarterly": (1, 2), "to_monthly": (1, 2), "to_daily": (1, 2),
     "cummax": (1, 1), "cumsum": (1, 1), "cumprod": (1, 1), "cummin": (1, 1),
     "zscore": (1, 1), "rank": (1, 1), "winsorize": (2, 2),
@@ -72,8 +72,12 @@ def _check_freq_agg(e: ast.Call, out: list[Issue]) -> None:
         _check_agg(e.args[1], out)
 
 
+_STOCK_LIKE = {"stock", "level", "price", "index"}
+
+
 def _lint_stock_flow(e: ast.BinOp, out: list[Issue]) -> None:
-    if e.op == "div" and {_kind(e.left), _kind(e.right)} == {"flow", "stock"}:
+    kinds = {_kind(e.left), _kind(e.right)}
+    if e.op == "div" and "flow" in kinds and kinds & _STOCK_LIKE:
         out.append(Issue("warning", "W-KIND-STOCK-FLOW",
                          "flow/stock ratio uses a point-in-time balance value; consider avg2(...)"))
 
@@ -136,9 +140,9 @@ def validate(program: ast.Program) -> list[Issue]:
 
     seen_top: set[str] = set()
     for decl in program.decls:
-        # backtest/learn REFERENCE a strategy/model name - they bind nothing, so
+        # backtest/learn REFERENCE a name and import's 'name' is a file path - none binds, so
         # `strategy s {...}` followed by `backtest s ...` is not a rebind (spec App. C).
-        if isinstance(decl, ast.OpaqueDecl) and decl.kind in ("backtest", "learn"):
+        if isinstance(decl, ast.OpaqueDecl) and decl.kind in ("backtest", "learn", "import"):
             continue
         name = getattr(decl, "name", None)
         if name is not None:

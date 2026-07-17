@@ -69,6 +69,21 @@ def compile_expr(e: ast.Expr, defined: set[str]) -> pl.Expr:
                     .otherwise(compile_expr(e.orelse, defined)))
         case ast.Call() if e.name in _TO_FREQ:  # desugar to resample with a kind-aware default agg
             return build("resample", [compile_expr(e.args[0], defined), _TO_FREQ[e.name], _to_agg(e.args)], {}, e.by)
+        case ast.Call() if e.name in ("ttm", "trailing"):
+            # kind-aware trailing window (§4.4): a flow accumulates, a rate/ratio averages,
+            # a return compounds, a stock/level/price/index is the last-known value (a
+            # balance sheet must not be summed). Computed expressions default to flow.
+            arg = e.args[0]
+            k = kind_of(arg.column) if isinstance(arg, ast.FieldRef) else None
+            window = "1y" if e.name == "ttm" else _call_arg(e.args[1], defined)
+            x = compile_expr(arg, defined)
+            if k in ("rate", "ratio"):
+                return build("roll_mean", [x, window], {}, e.by)
+            if k == "return":  # exact compounding: exp(sum(log(1+r))) - 1
+                return build("roll_sum", [(x + 1).log(), window], {}, e.by).exp() - 1
+            if k in (None, "flow", "per_share"):
+                return build("roll_sum", [x, window], {}, e.by)
+            return build("asof", [x], {}, e.by)
         case ast.Call():
             args = [_call_arg(a, defined) for a in e.args]
             kwargs = {k: _call_arg(v, defined) for k, v in e.kwargs}

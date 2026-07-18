@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-STDLIB_MODULES = ["math", "stats", "transform", "calculus", "geometry", "factor", "timeseries", "core"]
+STDLIB_MODULES = ["math", "stats", "transform", "calculus", "geometry", "factor", "timeseries", "risk", "core"]
 
 
 def stdlib_source() -> str:

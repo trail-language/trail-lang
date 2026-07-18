@@ -98,6 +98,9 @@ OPS: dict[str, OpSpec] = {
     "cumsum": OpSpec(1, 1, "time-series", "expanding sum (discrete integral)"),
     "cumprod": OpSpec(1, 1, "time-series", "expanding product (compounding)"),
     "cummin": OpSpec(1, 1, "time-series", "expanding minimum"),
+    "ts_mean": OpSpec(1, 1, "time-series", "whole-series mean per entity, broadcast back"),
+    "ts_std": OpSpec(1, 1, "time-series", "whole-series sample std (ddof=1) per entity, broadcast back"),
+    "ts_min": OpSpec(1, 1, "time-series", "whole-series minimum per entity, broadcast back"),
     # --- cross-sectional (per period[, group]) ---
     "zscore": OpSpec(1, 1, "cross-sectional", "standardize within (period[, group])"),
     "rank": OpSpec(1, 1, "cross-sectional", "average-tie rank, ascending, within group"),
@@ -113,7 +116,10 @@ OPS: dict[str, OpSpec] = {
     "xs_count": OpSpec(1, 1, "cross-sectional", "non-null count in group"),
     "xs_quantile": OpSpec(2, 2, "cross-sectional", "group q-quantile, broadcast back"),
     # --- elementwise / scalar ---
-    "count": OpSpec(1, 99, "elementwise", "sum of boolean flags as integers"),
+    "count": OpSpec(1, 99, "elementwise", "sum of boolean flags as integers (NULL-PROPAGATING: any null arg nulls the whole count; use count_true to skip nulls)"),
+    "count_true": OpSpec(1, 99, "elementwise", "count of true flags, treating null as false (null-tolerant complement of count)"),
+    "erf": OpSpec(1, 1, "elementwise", "Gauss error function (Abramowitz-Stegun 7.1.26, |err|<=1.5e-7)"),
+    "norm_ppf": OpSpec(1, 1, "elementwise", "inverse standard-normal CDF / probit (Acklam; p<=0 -> -inf, p>=1 -> +inf)"),
     "sqrt": OpSpec(1, 1, "elementwise", "square root (null for x<0)"),
     "abs": OpSpec(1, 1, "elementwise", "absolute value"),
     "log": OpSpec(1, 1, "elementwise", "natural log (null for x<=0)"),
@@ -174,6 +180,12 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
             return a[0].cum_prod().over(ENTITY)
         case "cummin":
             return a[0].cum_min().over(ENTITY)
+        case "ts_mean":  # whole-series reduction, broadcast to every row of the entity
+            return a[0].mean().over(ENTITY)
+        case "ts_std":
+            return a[0].std().over(ENTITY)
+        case "ts_min":
+            return a[0].min().over(ENTITY)
         case "roll_median":
             n = int(a[1])
             return a[0].rolling_median(window_size=n, min_samples=n).over(ENTITY)
@@ -223,6 +235,46 @@ def build(name: str, args: list, kwargs: dict, by: tuple[str, ...] | None) -> pl
             for extra in a[1:]:
                 out = out + extra.cast(pl.Int32)
             return out
+        case "count_true":  # null-tolerant: coalesce each flag to false before summing
+            out = _x(a[0]).fill_null(False).cast(pl.Int32)
+            for extra in a[1:]:
+                out = out + _x(extra).fill_null(False).cast(pl.Int32)
+            return out
+        case "erf":  # Abramowitz-Stegun 7.1.26; odd extension via sign so erf(0) is exactly 0
+            x = _x(a[0])
+            ax = x.abs()
+            t = 1.0 / (1.0 + 0.3275911 * ax)
+            poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741
+                        + t * (-1.453152027 + t * 1.061405429))))
+            return x.sign() * (1.0 - poly * (-ax * ax).exp())
+        case "norm_ppf":  # Acklam's inverse-normal (rel err ~1e-9 central); tails guarded to +-inf
+            p = _x(a[0])
+            a1, a2, a3, a4, a5, a6 = (-3.969683028665376e+01, 2.209460984245205e+02,
+                -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01,
+                2.506628277459239e+00)
+            b1, b2, b3, b4, b5 = (-5.447609879822406e+01, 1.615858368580409e+02,
+                -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01)
+            c1, c2, c3, c4, c5, c6 = (-7.784894002430293e-03, -3.223964580411365e-01,
+                -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00,
+                2.938163982698783e+00)
+            d1, d2, d3, d4 = (7.784695709041462e-03, 3.224671290700398e-01,
+                2.445134137142996e+00, 3.754408661907416e+00)
+            p_low, p_high = 0.02425, 1.0 - 0.02425
+            q = p - 0.5
+            r = q * q
+            central = ((((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q
+                       / (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1.0))
+            ql = (-2.0 * p.log()).sqrt()
+            lower = (((((c1 * ql + c2) * ql + c3) * ql + c4) * ql + c5) * ql + c6) \
+                / ((((d1 * ql + d2) * ql + d3) * ql + d4) * ql + 1.0)
+            qu = (-2.0 * (1.0 - p).log()).sqrt()
+            upper = -((((((c1 * qu + c2) * qu + c3) * qu + c4) * qu + c5) * qu + c6)
+                      / ((((d1 * qu + d2) * qu + d3) * qu + d4) * qu + 1.0))
+            return (pl.when(p <= 0.0).then(pl.lit(float("-inf")))
+                    .when(p >= 1.0).then(pl.lit(float("inf")))
+                    .when(p < p_low).then(lower)
+                    .when(p > p_high).then(upper)
+                    .otherwise(central))
         case "sqrt":
             return pl.when(_x(a[0]) < 0).then(None).otherwise(_x(a[0]).sqrt())
         case "abs":

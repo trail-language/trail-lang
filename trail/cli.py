@@ -5,10 +5,11 @@ import sys
 import warnings
 
 import click
+import polars as pl
 from lark.exceptions import UnexpectedInput, VisitError
 
 from trail import ast, catalog as catalog_core
-from trail.compiler import compile_model, universe_chain
+from trail.compiler import compile_model, compile_signal, universe_chain
 from trail.config import Config, ConfigError, load_config
 from trail.deps import extract
 from trail.describe import render_describe
@@ -97,6 +98,47 @@ def _all_available_fields(config: Config) -> set[str]:
     return out
 
 
+def _scoped_panel(decl: ast.ModelDecl | ast.SignalDecl,
+                  universes: dict[str, ast.UniverseDecl], config: Config) -> pl.DataFrame:
+    """Load exactly the panel a model/signal needs: bind its universe (compile_model's rule -
+    explicit `on` wins, a sole declared universe auto-binds, else the whole panel), then load the
+    decl PLUS its bound universe root chain so only the referenced fields are fetched (a stray
+    field in another decl - or in a universe this one never binds - must not abort the load).
+    Ancestor `where` fields load too since universes compose. Emits conformance/alignment warnings
+    as they surface. Shared by `run`, `describe`, and `signal`."""
+    if decl.universe is not None:
+        bound = universes.get(decl.universe)
+    elif len(universes) == 1:
+        bound = next(iter(universes.values()))
+    else:
+        bound = None
+    scoped = ast.Program(tuple(universe_chain(bound, universes)) + (decl,))
+    dep = extract(scoped)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", PanelConformanceWarning)
+        warnings.simplefilter("always", AlignmentWarning)
+        panel = load_panel_for(config, set(dep.fields), target_freq=decl.frequency,
+                               align_overrides=dep.align_overrides)
+    for w in caught:
+        if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
+            click.echo(f"WARN  {w.message}")
+    return panel
+
+
+def _emit_result(result: pl.DataFrame, out_path: str | None) -> None:
+    """Write the result frame to --out (csv/json/ndjson/parquet by extension) or print it."""
+    if out_path:
+        if out_path.endswith(".csv"):
+            result.write_csv(out_path)
+        elif out_path.endswith((".json", ".ndjson")):
+            result.write_ndjson(out_path)
+        else:
+            result.write_parquet(out_path)
+        click.echo(f"wrote {out_path}")
+    else:
+        click.echo(str(result))
+
+
 @main.command("describe")
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--config", "config_path", default=None, type=click.Path(exists=True))
@@ -118,28 +160,17 @@ def describe_cmd(path: str, config_path: str | None, model_name: str | None,
         sys.exit(1)
     try:
         config = load_config(config_path)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", PanelConformanceWarning)
-            warnings.simplefilter("always", AlignmentWarning)
-            if model_name is not None:
-                # same scoping as `run`: explicit `on` wins, a sole universe auto-binds; load the
-                # model + its bound universe root chain so exactly the model's fields are fetched.
-                model = models[model_name]
-                if model.universe is not None:
-                    bound = universes.get(model.universe)
-                elif len(universes) == 1:
-                    bound = next(iter(universes.values()))
-                else:
-                    bound = None
-                scoped = ast.Program(tuple(universe_chain(bound, universes)) + (model,))
-                dep = extract(scoped)
-                panel = load_panel_for(config, set(dep.fields), target_freq=model.frequency,
-                                       align_overrides=dep.align_overrides)
-            else:  # whole config: describe every field the sources can serve
+        if model_name is not None:
+            # scope the panel to the model + its bound universe root chain (shared with `run`)
+            panel = _scoped_panel(models[model_name], universes, config)
+        else:  # whole config: describe every field the sources can serve
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", PanelConformanceWarning)
+                warnings.simplefilter("always", AlignmentWarning)
                 panel = load_panel_for(config, _all_available_fields(config))
-        for w in caught:
-            if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
-                click.echo(f"WARN  {w.message}")
+            for w in caught:
+                if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
+                    click.echo(f"WARN  {w.message}")
     except ConfigError as e:
         click.echo(f"ERROR CONFIG {e}")
         sys.exit(1)
@@ -170,39 +201,35 @@ def run_cmd(path: str, model_name: str, config_path: str | None, no_stdlib: bool
     universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     try:
         config = load_config(config_path)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", PanelConformanceWarning)
-            warnings.simplefilter("always", AlignmentWarning)
-            # scope loading to the run model + its BOUND universe (compile_model's binding
-            # rule: explicit `on` wins, a sole universe auto-binds). A stray field in another
-            # model - or in a universe this model never binds - must not abort this run.
-            model = models[model_name]
-            if model.universe is not None:
-                bound = universes.get(model.universe)
-            elif len(universes) == 1:
-                bound = next(iter(universes.values()))
-            else:
-                bound = None
-            # the whole root chain: ancestor `where` fields must load too (universes compose)
-            scoped = ast.Program(tuple(universe_chain(bound, universes)) + (model,))
-            dep = extract(scoped)
-            panel = load_panel_for(config, set(dep.fields),
-                                   target_freq=models[model_name].frequency,
-                                   align_overrides=dep.align_overrides)
-        for w in caught:
-            if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
-                click.echo(f"WARN  {w.message}")
+        panel = _scoped_panel(models[model_name], universes, config)
     except ConfigError as e:
         click.echo(f"ERROR CONFIG {e}")
         sys.exit(1)
     result = compile_model(models[model_name], universes).run(panel)
-    if out_path:
-        if out_path.endswith(".csv"):
-            result.write_csv(out_path)
-        elif out_path.endswith((".json", ".ndjson")):
-            result.write_ndjson(out_path)
-        else:
-            result.write_parquet(out_path)
-        click.echo(f"wrote {out_path}")
-    else:
-        click.echo(str(result))
+    _emit_result(result, out_path)
+
+
+@main.command("signal")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--name", "signal_name", required=True)
+@click.option("--config", "config_path", default=None, type=click.Path(exists=True))
+@click.option("--no-stdlib", is_flag=True, help="Do not load the bundled standard library.")
+@click.option("--out", "out_path", default=None, type=click.Path())
+def signal_cmd(path: str, signal_name: str, config_path: str | None, no_stdlib: bool,
+               out_path: str | None) -> None:
+    """Run a `signal` declaration: a one-export, no-score model. Prints (or writes via --out)
+    the resulting [entity, time, NAME] series."""
+    program = _load_and_validate(path, with_stdlib=not no_stdlib)
+    signals = {d.name: d for d in program.decls if isinstance(d, ast.SignalDecl)}
+    if signal_name not in signals:
+        click.echo(f"ERROR no signal named '{signal_name}'")
+        sys.exit(1)
+    universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
+    try:
+        config = load_config(config_path)
+        panel = _scoped_panel(signals[signal_name], universes, config)
+    except ConfigError as e:
+        click.echo(f"ERROR CONFIG {e}")
+        sys.exit(1)
+    result = compile_signal(signals[signal_name], universes).run(panel)
+    _emit_result(result, out_path)

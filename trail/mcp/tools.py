@@ -8,7 +8,7 @@ from trail import ast, catalog as catalog_core
 from trail.compiler import compile_model, compile_signal
 from trail.describe import categorical_fields, fields_by_namespace, panel_fields, value_counts
 from trail.macro import TrailFunctionError
-from trail.mcp.data import DataSpecError, resolve_panel
+from trail.mcp.data import resolve_panel
 from trail.mcp.errors import to_error
 from trail.mcp.format import format_result
 from trail.pipeline import TrailImportError, prepare

@@ -29,3 +29,27 @@ def test_file_spec_reads_parquet(tmp_path):
 def test_unknown_spec_errors():
     with pytest.raises(DataSpecError):
         resolve_panel({"nope": 1})
+
+
+FIXTURE_CONFIG = "tests/fixtures/fixture.yaml"   # config backed by the bundled fixture source
+
+
+def test_config_whole_panel_no_decl():
+    panel, warns = resolve_panel({"config": FIXTURE_CONFIG})
+    assert panel.height > 0 and "meta.sector" in panel.columns
+
+
+def test_config_cache_memoizes(monkeypatch):
+    import trail.mcp._config_data as cd
+    cd._CACHE.clear()
+    calls = {"n": 0}
+    real = cd._load
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(cd, "_load", counting)
+    resolve_panel({"config": FIXTURE_CONFIG})
+    resolve_panel({"config": FIXTURE_CONFIG})
+    assert calls["n"] == 1   # second call served from cache

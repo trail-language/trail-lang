@@ -142,7 +142,10 @@ class _T(Transformer):
         return ast.Assignment(s[0].value, s[1], export=False)
 
     def export_stmt(self, s):
-        return ast.Assignment(s[0].value, s[1], export=True)
+        # `export NAME` (no RHS) surfaces the existing local NAME as an export of the same
+        # name; expr=None marks the bare form (validated/compiled against the local binding).
+        expr = s[1] if len(s) > 1 else None
+        return ast.Assignment(s[0].value, expr, export=True)
 
     def score_case(self, s):
         return ast.ScoreCase(ast.Literal(_num(s[0].value)), s[1])

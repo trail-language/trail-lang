@@ -76,7 +76,8 @@ def extract(node) -> DepReport:
                 case ast.ModelDecl():
                     for st in decl.statements:
                         if isinstance(st, ast.Assignment):
-                            _walk(st.expr, acc)
+                            if st.expr is not None:  # bare `export NAME` references nothing new
+                                _walk(st.expr, acc)
                         else:  # ScoreDecl
                             for c in st.cases:
                                 _walk(c.value, acc)

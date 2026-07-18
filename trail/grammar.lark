@@ -62,7 +62,7 @@ universe_decl: "universe" NAME "=" dotted ("where" expr)?
 model_decl: "model" NAME ("on" NAME)? ("at" FREQ)? "{" model_stmt+ "}"
 ?model_stmt: "desc" STRING                  -> desc_stmt
            | "on_missing" POLICY            -> policy_stmt
-           | "export" NAME "=" expr         -> export_stmt
+           | "export" NAME ("=" expr)?      -> export_stmt
            | "score" NAME "weight" NUMBER "{" score_case+ "else" NUMBER "}" -> score_stmt
            | NAME "=" expr                  -> assign_stmt
 score_case: NUMBER "if" expr

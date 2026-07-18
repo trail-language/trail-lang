@@ -233,3 +233,15 @@ def signal_cmd(path: str, signal_name: str, config_path: str | None, no_stdlib: 
         sys.exit(1)
     result = compile_signal(signals[signal_name], universes).run(panel)
     _emit_result(result, out_path)
+
+
+@main.command("mcp")
+@click.option("--transport", default="stdio", type=click.Choice(["stdio"]), help="MCP transport.")
+def mcp_cmd(transport: str) -> None:
+    """Run the Trail MCP server (stdio). Requires `pip install trail-lang[mcp]`."""
+    from trail.mcp.server import serve
+    try:
+        serve(transport=transport)
+    except RuntimeError as e:
+        click.echo(f"ERROR {e}")
+        sys.exit(1)

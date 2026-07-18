@@ -45,6 +45,7 @@ def load_panel() -> pl.DataFrame:
                 "income.sga": rev * 0.10,
                 "balance.total_assets": rev * 2.0,
                 "balance.current_assets": rev * 0.8,
+                "balance.other_current_assets": rev * 0.05,
                 "balance.current_liabilities": rev * 0.5,
                 "balance.total_liabilities": rev * 1.2,
                 "balance.long_term_debt": rev * 0.6 * (0.98**t),

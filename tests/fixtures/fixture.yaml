@@ -1,0 +1,6 @@
+# Offline config backed by the bundled fixture source (no credentials, no network).
+sources:
+  fixture:
+    driver: fixture
+precedence:
+  default: [fixture]

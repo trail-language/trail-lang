@@ -11,6 +11,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from trail import ast
+from trail.ops import OPS
+
+# The cross-sectional ops are the only builtins that consume a `by` group (they lower via
+# ops._group(by)); time-series/elementwise ops ignore grouping. Derived from the op registry
+# so this stays the single source of truth for "which ops take a group".
+_CROSS_SECTIONAL = frozenset(name for name, spec in OPS.items() if spec.axis == "cross-sectional")
 
 
 class TrailFunctionError(Exception):
@@ -45,6 +51,16 @@ def substitute(e, mapping: dict):
     return _rebuild(e, lambda c: substitute(c, mapping))
 
 
+def _propagate_by(e, by: tuple[str, ...]):
+    """Fill a call-site `by` into every cross-sectional op in `e` that carries no `by` of its
+    own. Ops that already specify a `by` (an explicit inner-group override) keep it; ops on
+    other axes ignore grouping. Recurses the whole tree so a def body's several cross-sectional
+    reducers are all grouped consistently."""
+    if isinstance(e, ast.Call) and e.name in _CROSS_SECTIONAL and e.by is None:
+        e = replace(e, by=by)
+    return _rebuild(e, lambda c: _propagate_by(c, by))
+
+
 def expand(e, funcs: dict[str, ast.FuncDef], stack: frozenset = frozenset()):
     """Inline every user-function call in `e`; raise on recursion or arity mismatch."""
     if isinstance(e, ast.Call) and e.name in funcs:
@@ -58,8 +74,16 @@ def expand(e, funcs: dict[str, ast.FuncDef], stack: frozenset = frozenset()):
         if e.kwargs:
             raise TrailFunctionError(f"E-FUNC-ARITY function '{e.name}' does not take keyword arguments")
         args = tuple(expand(a, funcs, stack) for a in e.args)
-        body = substitute(fd.body, dict(zip(fd.params, args, strict=True)))
-        return expand(body, funcs, stack | {e.name})
+        # Expand the body's own nested defs first, thread the call-site `by` into the
+        # cross-sectional ops it introduces, THEN substitute arguments. Doing this before
+        # substitution scopes the `by` to the def's own reducers: it never leaks into a
+        # caller's argument expression (mirroring how `by` binds to one builtin op, not its
+        # operands). Innermost expansion runs first, so an inner call-site `by` is already
+        # in place and _propagate_by (fill-if-None) leaves it untouched.
+        inlined = expand(fd.body, funcs, stack | {e.name})
+        if e.by is not None:
+            inlined = _propagate_by(inlined, e.by)
+        return substitute(inlined, dict(zip(fd.params, args, strict=True)))
     return _rebuild(e, lambda c: expand(c, funcs, stack))
 
 

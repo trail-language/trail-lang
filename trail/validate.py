@@ -203,6 +203,14 @@ def validate(program: ast.Program) -> list[Issue]:
                                      f"model '{decl.name}' must declare 'on': multiple universes exist"))
                 defined: set[str] = set()
                 for st in decl.statements:
+                    # bare `export NAME` (no RHS): surface an already-defined local; it neither
+                    # rebinds nor introduces a new name, so it is checked apart from the rebound rule.
+                    if isinstance(st, ast.Assignment) and st.expr is None:
+                        if st.name not in defined:
+                            out.append(Issue("error", "E-EXPORT-UNDEFINED",
+                                             f"export '{st.name}' names no local defined earlier in "
+                                             f"model '{decl.name}'"))
+                        continue
                     if isinstance(st, ast.Assignment):
                         _check_expr(st.expr, defined, out)
                         if (not _is_ws_call(st.expr)) and _contains_ws(st.expr):

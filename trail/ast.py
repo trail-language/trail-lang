@@ -103,7 +103,7 @@ class Call:
 @dataclass(frozen=True)
 class Assignment:
     name: str
-    expr: "Expr"
+    expr: "Expr | None"       # None = bare `export NAME` (surface an existing local; no RHS)
     export: bool = False
 
 

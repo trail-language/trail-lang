@@ -39,6 +39,7 @@ _FIELDS: list[tuple[str, str]] = [
     # balance
     ("balance.total_assets", "stock"),
     ("balance.current_assets", "stock"),
+    ("balance.other_current_assets", "stock"),  # coalesces FMP otherCurrentAssets / EDGAR OtherAssetsCurrent
     ("balance.current_liabilities", "stock"),
     ("balance.total_liabilities", "stock"),
     ("balance.long_term_debt", "stock"),

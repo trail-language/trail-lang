@@ -176,6 +176,8 @@ def compile_model(model: ast.ModelDecl, universes: dict[str, ast.UniverseDecl]) 
                 lf = lf.filter(compile_expr(u.where, set()))
         defined: set[str] = set()
         for st in model.statements:
+            if isinstance(st, ast.Assignment) and st.expr is None:
+                continue  # bare `export NAME`: the local is already a column; nothing to compute
             if isinstance(st, ast.ScoreDecl):
                 lf = lf.with_columns(_score_expr(st, defined).alias(st.name))
                 defined.add(st.name)

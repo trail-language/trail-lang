@@ -51,6 +51,20 @@ def test_run_ignores_unserved_frequency_in_another_model(tmp_path):
     assert res.exit_code == 0 and "margin" in res.output
 
 
+def test_signal_prints_series(tmp_path):
+    f = tmp_path / "sig.trail"
+    f.write_text("signal s = income.operating_income / income.revenue\n")
+    res = CliRunner().invoke(main, ["signal", str(f), "--name", "s"])
+    assert res.exit_code == 0 and "s" in res.output
+
+
+def test_signal_unknown_name_errors(tmp_path):
+    f = tmp_path / "sig.trail"
+    f.write_text("signal s = income.operating_income / income.revenue\n")
+    res = CliRunner().invoke(main, ["signal", str(f), "--name", "nope"])
+    assert res.exit_code == 1 and "no signal named 'nope'" in res.output
+
+
 def test_syntax_error_is_a_clean_message(tmp_path):
     f = tmp_path / "bad.trail"
     f.write_text("model m { a = income.revenue +++ }\n")

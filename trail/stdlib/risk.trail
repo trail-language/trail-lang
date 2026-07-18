@@ -1,0 +1,30 @@
+# Trail stdlib: risk - per-entity risk/performance metrics over a RETURN series.
+# DERIVED from the ts_* whole-series reducers + cumprod/cummax + math.
+#
+# Convention: these take a periodic RETURN series r (e.g. yoy(price) or a return field).
+# They build the equity curve INTERNALLY as cumprod(1 + r) and - crucially - seed the
+# running peak at 1.0 (inception capital, before the first return) so a first-period loss
+# is a real drawdown, not silently discarded. This is the correctness fix over the naive
+# `min(x/cummax(x)-1)` idiom, which omits the leading 1.0.
+#
+# Two names in the requested set were already taken by different (level/rolling) functions
+# and are left UNCHANGED to preserve existing behavior:
+#   - `drawdown(x)`  (stdlib/timeseries.trail) takes a price/equity LEVEL series (x/cummax(x)-1);
+#      no inception-1.0 issue there. The return-based drawdown SERIES is the helper `_dd` below,
+#      exposed as its whole-series minimum `max_drawdown`.
+#   - `sharpe(r, n)` (stdlib/core.trail) is the ROLLING Sharpe. The whole-series annualized
+#      form requested here ships as `ann_sharpe` to avoid redefining it.
+
+# --- internal equity-curve building blocks (leading-1.0 inception) ---
+def _equity(r) = cumprod(1 + r)                    # equity after each return (starts at 1+r0)
+def _peak(r)   = max(1, cummax(_equity(r)))        # running peak, seeded at 1.0 inception
+def _dd(r)     = _equity(r) / _peak(r) - 1         # drawdown series from returns (<= 0)
+
+# downside deviation: RMS of the below-target (0) returns
+def _downside(r) = sqrt(ts_mean(square(min(r, 0))))
+
+# --- public risk / performance metrics (per entity, whole-series) ---
+def max_drawdown(r)   = ts_min(_dd(r))                          # worst peak-to-trough drawdown (<= 0)
+def ann_sharpe(r, ppy) = ts_mean(r) / ts_std(r) * sqrt(ppy)    # annualized mean/vol ratio
+def sortino(r, ppy)   = ts_mean(r) / _downside(r) * sqrt(ppy)  # downside-deviation denominator
+def calmar(r, ppy)    = ts_mean(r) * ppy / (-max_drawdown(r))  # annualized return / |max drawdown|

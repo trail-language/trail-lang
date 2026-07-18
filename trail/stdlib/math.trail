@@ -22,6 +22,10 @@ def logb(x, b) = log(x) / log(b)
 def log1p(x) = log(1 + x)
 def expm1(x) = exp(x) - 1
 def pow10(x) = 10 ^ x
+def pow(x, y) = x ^ y                  # named power, composing the ^ operator
+
+# --- standard-normal distribution (erf/norm_ppf are primitives; normal_cdf composes erf) ---
+def normal_cdf(x) = 0.5 * (1 + erf(x / sqrt(2)))
 
 # --- hyperbolic (derivable from exp; note: overflow for very large |x|) ---
 def sinh(x)  = (exp(x) - exp(-x)) / 2

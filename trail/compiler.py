@@ -143,6 +143,15 @@ class ModelPlan:
         return self._lf_builder(panel).select([ENTITY, TIME, *self.exports]).collect()
 
 
+@dataclass
+class SignalPlan:
+    _lf_builder: Callable[[pl.DataFrame], pl.LazyFrame]
+    name: str
+
+    def run(self, panel: pl.DataFrame) -> pl.DataFrame:
+        return self._lf_builder(panel).select([ENTITY, TIME, self.name]).collect()
+
+
 def universe_chain(uni: ast.UniverseDecl | None,
                    universes: dict[str, ast.UniverseDecl]) -> list[ast.UniverseDecl]:
     """The universe and its ancestors (sub -> base -> ... -> stocks). Universes COMPOSE
@@ -191,3 +200,26 @@ def compile_model(model: ast.ModelDecl, universes: dict[str, ast.UniverseDecl]) 
 
     exports = tuple(s.name for s in model.statements if isinstance(s, ast.Assignment) and s.export)
     return ModelPlan(builder, exports)
+
+
+def compile_signal(signal: ast.SignalDecl, universes: dict[str, ast.UniverseDecl]) -> SignalPlan:
+    # A signal is a one-export, no-score model: same universe binding as compile_model
+    # (reference §8.3) - explicit `on` wins, a sole declared universe auto-binds, zero
+    # universes = full panel. The single expr compiles with defined=set() (a stray NameRef
+    # is already E-NAME-UNDEFINED in validate).
+    if signal.universe is not None:
+        uni = universes.get(signal.universe)
+    elif len(universes) == 1:
+        uni = next(iter(universes.values()))
+    else:
+        uni = None
+    chain = universe_chain(uni, universes)
+
+    def builder(panel: pl.DataFrame) -> pl.LazyFrame:
+        lf = panel.lazy()
+        for u in chain:  # ancestor filters compose (AND)
+            if u.where is not None:
+                lf = lf.filter(compile_expr(u.where, set()))
+        return lf.with_columns(compile_expr(signal.expr, set()).alias(signal.name))
+
+    return SignalPlan(builder, signal.name)

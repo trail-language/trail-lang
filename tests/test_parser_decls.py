@@ -61,9 +61,13 @@ def test_strategy_parses_as_opaque():
     assert isinstance(d, ast.OpaqueDecl) and d.kind == "strategy" and d.name == "s"
 
 
-def test_import_and_backtest_and_learn_opaque():
-    src = ('import "metrics/base.trail"\n'
-           'backtest bt from 2010-01 to 2025-12 { benchmark index.spx\n pit_lag 45d\n report cagr, sharpe }\n'
+def test_import_parses_to_import_decl():
+    d = parse_program('import "metrics/base.trail"').decls[0]
+    assert isinstance(d, ast.ImportDecl) and d.path == "metrics/base.trail"
+
+
+def test_backtest_and_learn_opaque():
+    src = ('backtest bt from 2010-01 to 2025-12 { benchmark index.spx\n pit_lag 45d\n report cagr, sharpe }\n'
            'learn weights for m { segment by meta.country\n target fwd_return(12)\n method shrink\n validate cv(5) }')
     kinds = [(d.kind, d.name) for d in parse_program(src).decls]
-    assert kinds == [("import", "metrics/base.trail"), ("backtest", "bt"), ("learn", "m")]
+    assert kinds == [("backtest", "bt"), ("learn", "m")]

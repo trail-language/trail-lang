@@ -154,9 +154,10 @@ def validate(program: ast.Program) -> list[Issue]:
 
     seen_top: set[str] = set()
     for decl in program.decls:
-        # backtest/learn REFERENCE a name and import's 'name' is a file path - none binds, so
-        # `strategy s {...}` followed by `backtest s ...` is not a rebind (spec App. C).
-        if isinstance(decl, ast.OpaqueDecl) and decl.kind in ("backtest", "learn", "import"):
+        # backtest/learn REFERENCE a name (none binds), so `strategy s {...}` followed by
+        # `backtest s ...` is not a rebind (spec App. C). An ImportDecl has no name and is
+        # resolved away in the pipeline before validation, so it skips via the getattr guard.
+        if isinstance(decl, ast.OpaqueDecl) and decl.kind in ("backtest", "learn"):
             continue
         name = getattr(decl, "name", None)
         if name is not None:

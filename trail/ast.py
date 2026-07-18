@@ -148,9 +148,17 @@ class SignalDecl:
 
 @dataclass(frozen=True)
 class OpaqueDecl:
-    kind: str  # strategy | backtest | learn | import
+    kind: str  # strategy | backtest | learn
     name: str
     text: str = ""
+
+
+@dataclass(frozen=True)
+class ImportDecl:
+    """`import "path"` - source-level inclusion. The importer gains the imported file's reusable
+    top-level `def`s and `universe`s (resolved/merged in trail.pipeline; models are skipped)."""
+
+    path: str
 
 
 @dataclass(frozen=True)

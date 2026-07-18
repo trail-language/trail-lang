@@ -12,7 +12,7 @@ from trail.compiler import compile_model, universe_chain
 from trail.config import ConfigError, load_config
 from trail.deps import extract
 from trail.macro import TrailFunctionError
-from trail.pipeline import prepare
+from trail.pipeline import TrailImportError, prepare
 from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for
 from trail.validate import validate
 
@@ -26,7 +26,8 @@ def _load_and_validate(path: str, with_stdlib: bool = True) -> ast.Program:
     with open(path) as fh:
         src = fh.read()
     try:
-        program = prepare(src, stdlib=with_stdlib)  # prepend stdlib, parse, inline defs
+        # resolve imports (relative to `path`), prepend stdlib, parse, inline defs
+        program = prepare(src, stdlib=with_stdlib, path=path)
     except UnexpectedInput as e:
         tok = getattr(e, "token", None)
         detail = f": unexpected {str(tok)!r}" if tok else ""
@@ -34,6 +35,9 @@ def _load_and_validate(path: str, with_stdlib: bool = True) -> ast.Program:
         sys.exit(1)
     except VisitError as e:  # a transformer-level rejection (e.g. a malformed @ qualifier arg)
         click.echo(f"ERROR SYNTAX {e.orig_exc}")
+        sys.exit(1)
+    except TrailImportError as e:
+        click.echo(f"ERROR IMPORT {e}")
         sys.exit(1)
     except TrailFunctionError as e:
         click.echo(f"ERROR FUNC {e}")

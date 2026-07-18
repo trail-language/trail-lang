@@ -195,7 +195,7 @@ class _T(Transformer):
         return ast.FuncDef(name, params, s[-1])
 
     def import_decl(self, s):
-        return ast.OpaqueDecl("import", s[0].value[1:-1])
+        return ast.ImportDecl(s[0].value[1:-1])
 
     def strategy_decl(self, s):
         return ast.OpaqueDecl("strategy", s[0].value)

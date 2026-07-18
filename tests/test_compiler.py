@@ -1,7 +1,7 @@
 import polars as pl
 import pytest
 
-from trail.compiler import compile_expr, compile_model
+from trail.compiler import compile_expr, compile_model, compile_signal
 from trail.fixtures import load_panel
 from trail.parser import parse_expr, parse_program
 
@@ -70,6 +70,33 @@ model m on tech { export rev = income.revenue }
     universes = {d.name: d for d in prog.decls[:1]}
     result = compile_model(prog.decls[1], universes).run(load_panel())
     assert set(result["entity"].unique().to_list()) == {"AAA", "BBB", "CCC"}
+
+
+def test_compile_signal_yields_named_series():
+    prog = parse_program("signal s = income.net_income / income.revenue\n")
+    result = compile_signal(prog.decls[0], {}).run(load_panel())
+    assert set(result.columns) == {"entity", "time", "s"}
+    assert result["s"].to_list() == pytest.approx([0.12] * 48)
+
+
+def test_compile_signal_universe_filter_applies():
+    prog = parse_program('''
+universe tech = stocks where meta.sector == "Tech"
+signal s on tech = income.revenue
+''')
+    universes = {d.name: d for d in prog.decls[:1]}
+    result = compile_signal(prog.decls[1], universes).run(load_panel())
+    assert set(result["entity"].unique().to_list()) == {"AAA", "BBB", "CCC"}
+
+
+def test_compile_signal_by_grouped_expr():
+    # `by meta.sector` z-scores within each (period, sector) group; the per-period
+    # mean within a multi-member sector is therefore ~0.
+    prog = parse_program("signal s = zscore(income.revenue) by meta.sector\n")
+    result = compile_signal(prog.decls[0], {}).run(load_panel())
+    tech = result.filter(pl.col("entity").is_in(["AAA", "BBB", "CCC"]))
+    for v in tech.group_by("time").agg(pl.col("s").mean())["s"].to_list():
+        assert v == pytest.approx(0.0, abs=1e-9)
 
 
 def test_zscore_scoped_to_universe():

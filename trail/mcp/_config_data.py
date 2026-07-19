@@ -12,6 +12,7 @@ from trail.compiler import universe_chain
 from trail.config import load_config
 from trail.deps import extract
 from trail.registry import resolve_driver
+from trail.source import ENTITY_COL
 from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for
 
 _CACHE: dict[tuple, pl.DataFrame] = {}
@@ -43,7 +44,9 @@ def _load(config, fields: frozenset[str], freq, align_overrides) -> tuple[pl.Dat
     for w in caught:
         if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
             warns.append(str(w.message))
-    return panel, warns
+    # align_and_merge returns the panel sorted [entity, time]; flag entity sorted so per-entity
+    # window ops skip re-sorting (mirrors mcp.data._finalize for the {config} path).
+    return panel.with_columns(pl.col(ENTITY_COL).set_sorted()), warns
 
 
 def resolve_config_panel(config_path, decl, universes) -> tuple[pl.DataFrame, list[str]]:

@@ -76,7 +76,7 @@ def describe_tool(data: dict, field: str | None = None) -> dict:
 
 def eval_tool(expression: str, data: dict, where: str | None = None, at: str | None = None,
               offset: int | None = None, limit: int | None = None, format: str = "compact",
-              to_file: str | None = None, no_stdlib: bool = False) -> dict:
+              to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
     parts = []
     on = ""
     if where:
@@ -94,8 +94,8 @@ def eval_tool(expression: str, data: dict, where: str | None = None, at: str | N
     universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     signal = next(d for d in program.decls if isinstance(d, ast.SignalDecl) and d.name == "value")
     try:
-        panel, warns = resolve_panel(data, signal, universes)
-        result = compile_signal(signal, universes).run(panel)
+        panel, warns = resolve_panel(data, signal, universes, lazy=True)
+        result = compile_signal(signal, universes).run(panel, engine="streaming" if streaming else None)
     except Exception as e:
         return to_error(e)
     return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,
@@ -104,7 +104,7 @@ def eval_tool(expression: str, data: dict, where: str | None = None, at: str | N
 
 def run_tool(name: str, data: dict, program: str | None = None, path: str | None = None,
              offset: int | None = None, limit: int | None = None, format: str = "compact",
-             to_file: str | None = None, no_stdlib: bool = False) -> dict:
+             to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
     if (program is None) == (path is None):
         return {"error": {"code": "E-ARGS", "message": "pass exactly one of `program` or `path`"}}
     try:
@@ -128,8 +128,8 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
     else:
         return {"error": {"code": "E-NAME-UNKNOWN", "message": f"no model or signal named '{name}'"}}
     try:
-        panel, warns = resolve_panel(data, decl, universes)
-        result = plan.run(panel)
+        panel, warns = resolve_panel(data, decl, universes, lazy=True)
+        result = plan.run(panel, engine="streaming" if streaming else None)
     except Exception as e:
         return to_error(e)
     return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,

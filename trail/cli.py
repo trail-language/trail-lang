@@ -15,6 +15,7 @@ from trail.deps import extract
 from trail.describe import render_describe
 from trail.macro import TrailFunctionError
 from trail.pipeline import TrailImportError, prepare
+from trail.source import ENTITY_COL
 from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for, resolve_driver
 from trail.validate import validate
 
@@ -122,7 +123,9 @@ def _scoped_panel(decl: ast.ModelDecl | ast.SignalDecl,
     for w in caught:
         if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
             click.echo(f"WARN  {w.message}")
-    return panel
+    # align returns the panel sorted [entity, time]; flag entity sorted so per-entity window ops
+    # skip re-sorting (matches the MCP config path in mcp._config_data).
+    return panel.with_columns(pl.col(ENTITY_COL).set_sorted())
 
 
 def _emit_result(result: pl.DataFrame, out_path: str | None) -> None:

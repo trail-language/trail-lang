@@ -50,18 +50,21 @@ def _register(server) -> None:
     @server.tool()
     def eval(expression: str, data: dict, where: str | None = None, at: str | None = None,
              offset: int | None = None, limit: int | None = None, format: str = "compact",
-             to_file: str | None = None, no_stdlib: bool = False) -> dict:
+             to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
         """Evaluate a trail EXPRESSION over `data` -> a [entity, time, value] panel. `where` filters the
         universe; `at` sets frequency. offset/limit omitted => full data; `format` is
-        compact|records|markdown|csv; `to_file` writes instead of inlining."""
+        compact|records|markdown|csv; `to_file` writes instead of inlining. `streaming` runs the
+        bounded-memory out-of-core engine (for panels larger than RAM; slower per-row, so leave off
+        when the panel fits)."""
         return tools.eval_tool(expression, data, where=where, at=at, offset=offset, limit=limit,
-                               format=format, to_file=to_file, no_stdlib=no_stdlib)
+                               format=format, to_file=to_file, no_stdlib=no_stdlib, streaming=streaming)
 
     @server.tool()
     def run(name: str, data: dict, program: str | None = None, path: str | None = None,
             offset: int | None = None, limit: int | None = None, format: str = "compact",
-            to_file: str | None = None, no_stdlib: bool = False) -> dict:
+            to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
         """Run a named model/signal from a full trail program. Pass exactly one of `program` (inline
-        source) or `path` (a .trail file, so `import` resolves). Result panel paginated + formatted."""
+        source) or `path` (a .trail file, so `import` resolves). Result panel paginated + formatted.
+        `streaming` runs the bounded-memory out-of-core engine (for panels larger than RAM)."""
         return tools.run_tool(name, data, program=program, path=path, offset=offset, limit=limit,
-                              format=format, to_file=to_file, no_stdlib=no_stdlib)
+                              format=format, to_file=to_file, no_stdlib=no_stdlib, streaming=streaming)

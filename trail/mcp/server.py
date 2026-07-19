@@ -8,14 +8,14 @@ def _import_fastmcp():
     return FastMCP
 
 
-def serve(transport: str = "stdio") -> None:
+def serve(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
     try:
         FastMCP = _import_fastmcp()
     except ImportError as e:
         raise RuntimeError(
             "the MCP server needs the optional 'mcp' dependency: pip install trail-lang[mcp]"
         ) from e
-    server = FastMCP("trail")
+    server = FastMCP("trail", host=host, port=port)  # host/port apply to the streamable-http transport
     _register(server)
     server.run(transport=transport)
 

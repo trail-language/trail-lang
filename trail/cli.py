@@ -236,12 +236,19 @@ def signal_cmd(path: str, signal_name: str, config_path: str | None, no_stdlib: 
 
 
 @main.command("mcp")
-@click.option("--transport", default="stdio", type=click.Choice(["stdio"]), help="MCP transport.")
-def mcp_cmd(transport: str) -> None:
-    """Run the Trail MCP server (stdio). Requires `pip install trail-lang[mcp]`."""
+@click.option("--transport", default="stdio",
+              type=click.Choice(["stdio", "streamable-http"]), help="MCP transport.")
+@click.option("--host", default="127.0.0.1", help="Bind host (streamable-http).")
+@click.option("--port", default=8000, type=int, help="Bind port (streamable-http).")
+def mcp_cmd(transport: str, host: str, port: int) -> None:
+    """Run the Trail MCP server. Requires `pip install trail-lang[mcp]`.
+
+    `stdio` (default) for local MCP clients; `streamable-http` (endpoint /mcp) to serve
+    over a network, e.g. `trail mcp --transport streamable-http --host 0.0.0.0 --port 3000`.
+    """
     from trail.mcp.server import serve
     try:
-        serve(transport=transport)
+        serve(transport=transport, host=host, port=port)
     except RuntimeError as e:
         click.echo(f"ERROR {e}")
         sys.exit(1)

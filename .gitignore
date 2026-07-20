@@ -5,6 +5,5 @@ __pycache__/
 .ruff_cache/
 dist/
 .omc/
-.claude/*
-!.claude/skills/
+.claude/
 

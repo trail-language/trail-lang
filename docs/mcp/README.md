@@ -1,16 +1,3 @@
----
-name: trail-mcp
-description: >-
-  Use when writing or running Trail — the declarative (entity × time) panel
-  expression language for financial indicators, factor models, scores, and
-  screens — over its MCP server. Covers the six Trail MCP tools (functions,
-  schema, validate, describe, eval, run), the expression notation (operators,
-  field references, @ qualifiers, the `by` group clause, null semantics), the
-  full built-in + stdlib function catalog, and the model/signal/universe/def
-  declarations. Trigger on: writing a Trail expression or `.trail` model,
-  validating/evaluating Trail source, or calling any trail_* MCP tool.
----
-
 # Trail over MCP
 
 Trail is a small, total, declarative language for computing financial

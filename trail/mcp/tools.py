@@ -134,3 +134,49 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
         return to_error(e)
     return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,
                          extra={"warnings": warns} if warns else None)
+
+
+def fetch_tool(expressions: list[str], data: dict, where: str | None = None, at: str | None = None,
+               offset: int | None = None, limit: int | None = None, format: str = "compact",
+               to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
+    """Project several trail EXPRESSIONS into one wide [entity, time, <cols>] frame - retrieval, not a
+    single computed value. Each expression becomes a column (named by the expression when unambiguous,
+    else `f0..fn` with a `columns` map). Compiles as a throwaway multi-export model so it reuses the
+    same universe binding, validation, alignment, and lazy/streaming execution as `eval`/`run`."""
+    if not isinstance(expressions, list) or not expressions:
+        return {"error": {"code": "E-ARGS", "message": "`expressions` must be a non-empty list of trail expressions"}}
+    if not all(isinstance(e, str) for e in expressions):
+        return {"error": {"code": "E-ARGS", "message": "`expressions` must be a list of strings"}}
+    parts: list[str] = []
+    on = ""
+    if where:
+        parts.append(f"universe __fetch_u = stocks where {where}")
+        on = " on __fetch_u"
+    at_clause = f" at {at}" if at else ""
+    names = [f"f{i}" for i in range(len(expressions))]
+    body = "\n".join(f"  export {n} = {e}" for n, e in zip(names, expressions))
+    parts.append(f"model __fetch{on}{at_clause} {{\n{body}\n}}")
+    try:
+        program = prepare("\n".join(parts), stdlib=not no_stdlib)
+    except _PARSE_ERRORS as e:
+        return to_error(e)
+    if (err := _validate_or_error(program)) is not None:
+        return err
+    universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
+    model = next(d for d in program.decls if isinstance(d, ast.ModelDecl) and d.name == "__fetch")
+    try:
+        panel, warns = resolve_panel(data, model, universes, lazy=True)
+        result = compile_model(model, universes).run(panel, engine="streaming" if streaming else None)
+    except Exception as e:
+        return to_error(e)
+    # Present columns by their expression text when that is unambiguous; otherwise keep f0..fn and
+    # hand back an explicit column->expression map so nothing is silently collapsed.
+    extra: dict = {}
+    if warns:
+        extra["warnings"] = warns
+    if len(set(expressions)) == len(expressions) and not ({"entity", "time"} & set(expressions)):
+        result = result.rename(dict(zip(names, expressions)))
+    else:
+        extra["columns"] = dict(zip(names, expressions))
+    return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,
+                         extra=extra or None)

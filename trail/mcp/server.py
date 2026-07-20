@@ -68,3 +68,13 @@ def _register(server) -> None:
         `streaming` runs the bounded-memory out-of-core engine (for panels larger than RAM)."""
         return tools.run_tool(name, data, program=program, path=path, offset=offset, limit=limit,
                               format=format, to_file=to_file, no_stdlib=no_stdlib, streaming=streaming)
+
+    @server.tool()
+    def fetch(expressions: list[str], data: dict, where: str | None = None, at: str | None = None,
+              offset: int | None = None, limit: int | None = None, format: str = "compact",
+              to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
+        """Fetch a WIDE frame: project several trail EXPRESSIONS into one [entity, time, <cols>] panel
+        (retrieval, not a single computed value like `eval`). Each expression becomes a column. `where`
+        filters the universe, `at` sets frequency; `data`/`format`/`streaming` behave as in `eval`."""
+        return tools.fetch_tool(expressions, data, where=where, at=at, offset=offset, limit=limit,
+                                format=format, to_file=to_file, no_stdlib=no_stdlib, streaming=streaming)

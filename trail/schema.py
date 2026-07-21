@@ -20,53 +20,12 @@ class FieldSpec:
     kind: str  # core: flow | stock | ratio | per_share | price | meta; plugins may add others
 
 
+# Approach X: the language ships NO domain vocabulary - every source declares its own fields
+# (edgar.*, fmp.*, gmd.*, ...) via the `trail.schema` entry point. `_CORE` retains only the shared
+# `meta.*` coordination fields the engine needs by name: `meta.country` is the cross-source bridge key
+# (Capabilities.bridge_field), and sector/exchange/market_cap/is_active are shared entity metadata
+# that multiple sources may provide (routed by precedence like any shared field).
 _FIELDS: list[tuple[str, str]] = [
-    # income
-    ("income.revenue", "flow"),
-    ("income.cogs", "flow"),
-    ("income.gross_profit", "flow"),
-    ("income.operating_income", "flow"),
-    ("income.net_income", "flow"),
-    ("income.interest_expense", "flow"),
-    ("income.income_tax_expense", "flow"),
-    ("income.income_before_tax", "flow"),
-    ("income.eps_diluted", "per_share"),
-    ("income.weighted_average_shares_diluted", "stock"),
-    ("income.weighted_average_shares", "stock"),
-    ("income.ebitda", "flow"),
-    ("income.depreciation_amortization", "flow"),
-    ("income.sga", "flow"),
-    # balance
-    ("balance.total_assets", "stock"),
-    ("balance.current_assets", "stock"),
-    ("balance.other_current_assets", "stock"),  # coalesces FMP otherCurrentAssets / EDGAR OtherAssetsCurrent
-    ("balance.current_liabilities", "stock"),
-    ("balance.total_liabilities", "stock"),
-    ("balance.long_term_debt", "stock"),
-    ("balance.total_debt", "stock"),
-    ("balance.total_equity", "stock"),
-    ("balance.retained_earnings", "stock"),
-    ("balance.accounts_receivable", "stock"),
-    ("balance.inventory", "stock"),
-    ("balance.accounts_payable", "stock"),
-    ("balance.net_fixed_assets", "stock"),
-    ("balance.cash_and_equivalents", "stock"),
-    ("balance.cash_and_short_term_investments", "stock"),
-    ("balance.minority_interest", "stock"),
-    ("balance.common_stock", "stock"),
-    ("balance.goodwill", "stock"),
-    # cash
-    ("cash.cfo", "flow"),
-    ("cash.capex", "flow"),
-    ("cash.free_cash_flow", "flow"),
-    ("cash.stock_issued", "flow"),
-    ("cash.cfi", "flow"),
-    ("cash.cff", "flow"),
-    ("cash.net_change_in_cash", "flow"),
-    ("cash.dividends_paid", "flow"),
-    # price & meta
-    ("price.adj_close", "price"),
-    ("price.dividends", "per_share"),
     ("meta.sector", "meta"),
     ("meta.exchange", "meta"),
     ("meta.market_cap", "meta"),

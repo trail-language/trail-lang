@@ -42,8 +42,8 @@ def _finalize_lazy(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.sort([ENTITY_COL, TIME_COL]).with_columns(pl.col(ENTITY_COL).set_sorted())
 
 
-def resolve_panel(data: dict, decl=None, universes=None,
-                  lazy: bool = False) -> tuple[pl.DataFrame | pl.LazyFrame, list[str]]:
+def resolve_panel(data: dict, decl=None, universes=None, lazy: bool = False,
+                  entities=None) -> tuple[pl.DataFrame | pl.LazyFrame, list[str]]:
     if not isinstance(data, dict) or len(data) == 0:
         raise DataSpecError("E-DATA `data` must be one of {config}, {file}, {rows}")
     if "rows" in data:
@@ -57,5 +57,5 @@ def resolve_panel(data: dict, decl=None, universes=None,
         return _finalize(df), []
     if "config" in data:
         from trail.mcp._config_data import resolve_config_panel   # optional-heavy; imported lazily
-        return resolve_config_panel(data["config"], decl, universes)
+        return resolve_config_panel(data["config"], decl, universes, entities=entities)
     raise DataSpecError(f"E-DATA unknown data spec keys: {sorted(data)}")

@@ -76,7 +76,8 @@ def describe_tool(data: dict, field: str | None = None) -> dict:
 
 def eval_tool(expression: str, data: dict, where: str | None = None, at: str | None = None,
               offset: int | None = None, limit: int | None = None, format: str = "compact",
-              to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
+              to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False,
+              entities: list[str] | None = None) -> dict:
     parts = []
     on = ""
     if where:
@@ -94,7 +95,7 @@ def eval_tool(expression: str, data: dict, where: str | None = None, at: str | N
     universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     signal = next(d for d in program.decls if isinstance(d, ast.SignalDecl) and d.name == "value")
     try:
-        panel, warns = resolve_panel(data, signal, universes, lazy=True)
+        panel, warns = resolve_panel(data, signal, universes, lazy=True, entities=entities)
         result = compile_signal(signal, universes).run(panel, engine="streaming" if streaming else None)
     except Exception as e:
         return to_error(e)
@@ -104,7 +105,8 @@ def eval_tool(expression: str, data: dict, where: str | None = None, at: str | N
 
 def run_tool(name: str, data: dict, program: str | None = None, path: str | None = None,
              offset: int | None = None, limit: int | None = None, format: str = "compact",
-             to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
+             to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False,
+             entities: list[str] | None = None) -> dict:
     if (program is None) == (path is None):
         return {"error": {"code": "E-ARGS", "message": "pass exactly one of `program` or `path`"}}
     try:
@@ -128,7 +130,7 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
     else:
         return {"error": {"code": "E-NAME-UNKNOWN", "message": f"no model or signal named '{name}'"}}
     try:
-        panel, warns = resolve_panel(data, decl, universes, lazy=True)
+        panel, warns = resolve_panel(data, decl, universes, lazy=True, entities=entities)
         result = plan.run(panel, engine="streaming" if streaming else None)
     except Exception as e:
         return to_error(e)
@@ -138,7 +140,8 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
 
 def fetch_tool(expressions: list[str], data: dict, where: str | None = None, at: str | None = None,
                offset: int | None = None, limit: int | None = None, format: str = "compact",
-               to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False) -> dict:
+               to_file: str | None = None, no_stdlib: bool = False, streaming: bool = False,
+               entities: list[str] | None = None) -> dict:
     """Project several trail EXPRESSIONS into one wide [entity, time, <cols>] frame - retrieval, not a
     single computed value. Each expression becomes a column (named by the expression when unambiguous,
     else `f0..fn` with a `columns` map). Compiles as a throwaway multi-export model so it reuses the
@@ -165,7 +168,7 @@ def fetch_tool(expressions: list[str], data: dict, where: str | None = None, at:
     universes = {d.name: d for d in program.decls if isinstance(d, ast.UniverseDecl)}
     model = next(d for d in program.decls if isinstance(d, ast.ModelDecl) and d.name == "__fetch")
     try:
-        panel, warns = resolve_panel(data, model, universes, lazy=True)
+        panel, warns = resolve_panel(data, model, universes, lazy=True, entities=entities)
         result = compile_model(model, universes).run(panel, engine="streaming" if streaming else None)
     except Exception as e:
         return to_error(e)

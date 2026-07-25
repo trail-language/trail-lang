@@ -35,12 +35,14 @@ def _all_fields(config) -> set[str]:
     return out
 
 
-def _load(config, fields: frozenset[str], freq, align_overrides) -> tuple[pl.DataFrame, list[str]]:
+def _load(config, fields: frozenset[str], freq, align_overrides,
+          entities=None) -> tuple[pl.DataFrame, list[str]]:
     warns: list[str] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", PanelConformanceWarning)
         warnings.simplefilter("always", AlignmentWarning)
-        panel = load_panel_for(config, set(fields), target_freq=freq, align_overrides=align_overrides)
+        panel = load_panel_for(config, set(fields), target_freq=freq, entities=entities,
+                               align_overrides=align_overrides)
     for w in caught:
         if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
             warns.append(str(w.message))
@@ -49,7 +51,8 @@ def _load(config, fields: frozenset[str], freq, align_overrides) -> tuple[pl.Dat
     return panel.with_columns(pl.col(ENTITY_COL).set_sorted()), warns
 
 
-def resolve_config_panel(config_path, decl, universes) -> tuple[pl.DataFrame, list[str]]:
+def resolve_config_panel(config_path, decl, universes,
+                         entities=None) -> tuple[pl.DataFrame, list[str]]:
     config = load_config(config_path)
     if decl is None:
         fields = frozenset(_all_fields(config))
@@ -64,9 +67,12 @@ def resolve_config_panel(config_path, decl, universes) -> tuple[pl.DataFrame, li
         scoped = ast.Program(tuple(universe_chain(bound, universes)) + (decl,))
         dep = extract(scoped)
         fields, freq, aligns = frozenset(dep.fields), decl.frequency, dep.align_overrides
-    key = (os.path.abspath(config_path), fields, freq)
+    # `entities` MUST be part of the key: an entity-scoped load produces a narrower panel, and
+    # serving it to a later unscoped request would silently answer from a subset of the universe.
+    scope = tuple(sorted(entities)) if entities else None
+    key = (os.path.abspath(config_path), fields, freq, scope)
     if key not in _CACHE:
-        panel, warns = _load(config, fields, freq, aligns)
+        panel, warns = _load(config, fields, freq, aligns, entities=entities)
         _CACHE[key] = panel
         return panel, warns
     return _CACHE[key], []

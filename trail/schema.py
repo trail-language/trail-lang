@@ -60,7 +60,15 @@ def active_schema() -> dict[str, FieldSpec]:
     return {**plugins, **_CORE} if plugins else dict(_CORE)
 
 
+#: reserved namespace for tracked-view references (`views.<name>` / `views.<model>.<export>`); the
+#: default writeable provider owns it. Recognized statically so a view reference validates before the
+#: view exists on disk; the store contributes the concrete columns at load time (trail/views.py).
+VIEW_NAMESPACE = "views"
+
+
 def is_field(column: str) -> bool:
+    if column.split(".", 1)[0] == VIEW_NAMESPACE:
+        return True
     return column in _CORE or column in _plugin_fields()
 
 

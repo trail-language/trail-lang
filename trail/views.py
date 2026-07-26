@@ -35,10 +35,14 @@ def _bound_universe(decl, universes):
 
 
 def _panel_key(config) -> str:
-    """Fingerprint of the config knobs that change the loaded frame (period window, PIT placement,
-    strict conformance). A view built under one panel config must not be served under another —
-    these are part of the view's identity, not just the declaration."""
-    return repr((config.periods, config.pit, config.strict))
+    """Fingerprint of the config that changes the loaded frame: the panel window / PIT / strict knobs,
+    plus the routing (`precedence`) and every source's `(driver, options)` — a per-source `options.pit`
+    or a `precedence` edit changes which/how data loads just as `periods` does. A view built under one
+    config must not be served under another, so all of it is part of the view's identity. Over-scoped
+    on purpose (over-invalidation is the safe direction); repr is stable cross-process because the
+    dicts are insertion-ordered from a deterministic YAML parse (same argument as expr_hash)."""
+    sources = {n: (s.driver, s.options) for n, s in config.sources.items()}
+    return repr((config.periods, config.pit, config.strict, config.precedence, sources))
 
 
 def expr_hash(decl, universes) -> str:

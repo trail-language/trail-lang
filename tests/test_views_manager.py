@@ -44,6 +44,22 @@ def test_expr_hash_changes_with_body():
     assert expr_hash(da, {}) != expr_hash(db, {})
 
 
+def test_panel_key_covers_precedence_and_source_options():
+    from trail.config import Config, SourceSpec
+    from trail.views import _panel_key
+    base = Config(sources={"a": SourceSpec("a", "d", {})}, precedence={"default": ["a"]})
+    pk = _panel_key(base)
+    # a precedence edit changes the frame's identity
+    assert _panel_key(Config(sources={"a": SourceSpec("a", "d", {})},
+                             precedence={"default": ["a"], "meta": ["a"]})) != pk
+    # a per-source options edit (e.g. options.pit) changes the frame's identity
+    assert _panel_key(Config(sources={"a": SourceSpec("a", "d", {"pit": "naive"})},
+                             precedence={"default": ["a"]})) != pk
+    # periods / pit / strict still count
+    assert _panel_key(Config(sources={"a": SourceSpec("a", "d", {})},
+                             precedence={"default": ["a"]}, periods=(2019, 2022))) != pk
+
+
 def test_materialize_writes_then_serves_stored(tmp_path, fixture_config):
     store = LocalDiskViewStore({"dir": str(tmp_path / "views")})
     prog = prepare(PROGRAM, stdlib=False)

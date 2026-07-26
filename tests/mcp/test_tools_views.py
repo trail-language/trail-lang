@@ -105,6 +105,23 @@ def test_config_panel_edit_triggers_recompute(tmp_path):
     assert years and years <= {"2020", "2021"}                          # M2: fresh narrow panel
 
 
+def test_source_option_edit_triggers_recompute(tmp_path):
+    # H1 residual: a per-source recipe edit (options.pit) is part of the view identity
+    p = tmp_path / "trail.yaml"
+    store = _store(tmp_path)
+
+    def write(src_opts):
+        p.write_text("sources:\n  fixture:\n    driver: trail.sources.fixture\n" + src_opts +
+                     "precedence:\n  default: [fixture]\n"
+                     "panel:\n  periods: [2019, 2022]\n")
+        return str(p)
+
+    run_tool("factor", {"config": write("")}, program=MODEL, format="records")
+    pk0 = store.manifest("factor").panel_key
+    run_tool("factor", {"config": write("    options: {pit: naive}\n")}, program=MODEL, format="records")
+    assert store.manifest("factor").panel_key != pk0
+
+
 def test_drop_rejects_traversing_name(tmp_path):
     # H2: a raw MCP-supplied name must not escape the store dir
     victim = tmp_path / "victim.parquet"

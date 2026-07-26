@@ -15,7 +15,21 @@ from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
 from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
+from trail.source import ENTITY_COL
 from trail.store import Manifest, ViewStore, view_columns
+
+
+def _group_signature(panel, by_cols) -> dict:
+    """Per by-column hash of the entity->group mapping. A grouping change (e.g. a sector
+    reclassification) is invisible to a fresh panel's group membership, so it must invalidate the
+    incremental path — a mismatch against the stored hash forces a full rebuild."""
+    out: dict = {}
+    for col in by_cols:
+        if col in panel.columns:
+            pairs = sorted(set(zip(panel.get_column(ENTITY_COL).to_list(),
+                                   panel.get_column(col).to_list())))
+            out[col] = hashlib.sha256(repr(pairs).encode()).hexdigest()[:16]
+    return out
 
 
 def _decl_body(decl) -> tuple:
@@ -136,7 +150,7 @@ class ViewManager:
             return True
         return self._source_tokens() != mf.freshness
 
-    def _manifest(self, decl, universes, kind, exports, cols) -> Manifest:
+    def _manifest(self, decl, universes, kind, exports, cols, group_hash=None) -> Manifest:
         return Manifest(
             name=decl.name, kind=kind, exports=tuple(exports),
             expr_hash=expr_hash(decl, universes),
@@ -144,6 +158,7 @@ class ViewManager:
             freshness=self._source_tokens(),
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
+            group_hash=group_hash or {},
         )
 
     def _compiled(self, decl, universes):
@@ -160,7 +175,8 @@ class ViewManager:
         plan, exports, kind = self._compiled(decl, universes)
         cols = view_columns(kind, decl.name, exports, self.store.namespace)
         result = plan.run(panel).rename({e: c for e, c in zip(exports, cols)})
-        return result, self._manifest(decl, universes, kind, exports, cols)
+        gh = _group_signature(panel, {".".join(b) for b in _by_fields(decl)})
+        return result, self._manifest(decl, universes, kind, exports, cols, gh)
 
     def _full_build(self, decl, universes, entities):
         frame, mf = self.build_frame(decl, universes, entities)
@@ -199,7 +215,14 @@ class ViewManager:
                     continue
                 if cells:
                     changed_any = True
-                    for f in src.available_fields():    # a filing dirties all of that entity's fields
+                    fields = set(src.available_fields())  # a filing dirties all of that entity's fields
+                    try:                                  # union fields served only at other frequencies
+                        caps = src.capabilities()
+                        for fq in (caps.frequencies or ([caps.frequency] if caps.frequency else [])):
+                            fields |= set(src.available_fields(fq))
+                    except Exception:
+                        pass
+                    for f in fields:
                         dirty.setdefault(f, set()).update(cells)
             except Exception:
                 return "COARSE"
@@ -211,11 +234,17 @@ class ViewManager:
                         pass
         return dirty if changed_any else None
 
-    def _recompute_merge(self, decl, universes, dirty):
+    def _recompute_merge(self, decl, universes, mf, dirty):
         from trail.mcp._config_data import resolve_config_panel
+        by_cols = {".".join(b) for b in _by_fields(decl)}
+        if len(by_cols) >= 2:  # composed distinct groupings: entities(F) can't guarantee inner groups
+            return self._full_build(decl, universes, None)  # -> full rebuild (exact, just not scoped)
         # cheap universe-wide panel for group membership + period grids (by-fields carry the grouping)
         prop_panel, _ = resolve_config_panel(self.config_path, decl, universes, fresh=True)
-        index = build_index(prop_panel, {".".join(b) for b in _by_fields(decl)})
+        cur_gh = _group_signature(prop_panel, by_cols)
+        if cur_gh != mf.group_hash:  # a group reassignment invalidates footprint scoping -> full rebuild
+            return self._full_build(decl, universes, None)
+        index = build_index(prop_panel, by_cols)
         footprint = model_footprint(decl, dirty, index)
         if not footprint:
             return self.store.read(decl.name)
@@ -226,23 +255,25 @@ class ViewManager:
         cols = view_columns(kind, decl.name, exports, self.store.namespace)
         res = plan.run(sub).rename({e: c for e, c in zip(exports, cols)})
         merged = replace_rows(self.store.read(decl.name), res, footprint)
-        self.store.write(decl.name, merged, self._manifest(decl, universes, kind, exports, cols))
+        self.store.write(decl.name, merged, self._manifest(decl, universes, kind, exports, cols, cur_gh))
         return merged
 
     def serve(self, decl, universes, entities=None):
-        """Return `decl`'s persisted frame. Rebuild fully on a recipe change or an entity-scoped
-        request; otherwise consult the source changefeed — recompute only the dirty footprint when one
-        exists, else a full rebuild. Serve the stored frame unchanged when nothing changed."""
+        """Return `decl`'s persisted frame. An entity-scoped request computes + returns WITHOUT
+        persisting (a scoped rescore must never overwrite the full stored view). Otherwise: rebuild
+        fully on a recipe change; else consult the source changefeed — recompute only the dirty
+        footprint when one exists, else a full rebuild. Serve stored unchanged when nothing changed."""
+        if entities is not None:                    # scoped rescore: compute + return, never persist
+            frame, _ = self.build_frame(decl, universes, entities)
+            return frame
         mf = self.store.manifest(decl.name)
         if (mf is None or mf.expr_hash != expr_hash(decl, universes)
                 or mf.panel_key != _panel_key(self.config)):
-            return self._full_build(decl, universes, entities)
-        if entities is not None:                    # an entity-scoped request must not merge a subset
-            return self._full_build(decl, universes, entities)
+            return self._full_build(decl, universes, None)
         dirty = self._detect_dirty(mf)
         if dirty is None:                           # nothing changed -> serve stored (rebuild if gone)
             cached = self.store.read(decl.name)
-            return cached if cached is not None else self._full_build(decl, universes, entities)
+            return cached if cached is not None else self._full_build(decl, universes, None)
         if dirty == "COARSE":                       # a changefeed-less source moved -> full rebuild
-            return self._full_build(decl, universes, entities)
-        return self._recompute_merge(decl, universes, dirty)
+            return self._full_build(decl, universes, None)
+        return self._recompute_merge(decl, universes, mf, dirty)

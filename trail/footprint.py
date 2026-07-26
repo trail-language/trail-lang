@@ -17,38 +17,48 @@ from trail.source import ENTITY_COL, TIME_COL
 
 INF = float("inf")
 
-# time-series ops whose lookback is unbounded (any prior input affects every later output)
-_TS_UNBOUNDED = frozenset({
-    "cummax", "cumsum", "cumprod", "cummin", "ts_mean", "ts_std", "ts_min", "asof",
-    "ewm_mean", "ewm_std", "ttm", "trailing", "resample",
-    "to_annual", "to_quarterly", "to_monthly", "to_daily",
-})
 _TS_LAG = frozenset({"lag"})  # output t reads input t-k -> a dirty input t reaches output t+k
 # windowed ops: output t reads inputs [t-w+1 .. t] -> a dirty input t reaches output t+(w-1)
 _TS_WINDOWED = frozenset({
     "roll_mean", "roll_sum", "roll_std", "roll_var", "roll_max", "roll_min",
     "roll_quantile", "roll_median", "roll_skew", "decay_linear",
 })
+# whole-entity ops: a dirty input at ANY period taints EVERY period of that entity, in BOTH directions -
+# whole-series statistics (ts_*) and frequency resamples (a bucket aggregate broadcast to all its rows,
+# so an earlier output depends on a later input in the same bucket). Dispatched to expand_whole_entity.
+_TS_WHOLE_ENTITY = frozenset({
+    "ts_mean", "ts_std", "ts_min", "resample",
+    "to_annual", "to_quarterly", "to_monthly", "to_daily",
+})
+# Everything else time-series (cum*, asof, ewm_*, ttm, trailing, or any UNCLASSIFIED op) is forward-INF:
+# the safe default over-taints the entity's forward tail rather than risk missing a cell.
+
+# cross-sectional op names (for nested-distinct-by detection), derived from the op catalog
+_CROSS_SECTIONAL = frozenset(n for n, s in OPS.items() if s.axis == "cross-sectional")
+
+
+def _int_window(args: tuple):
+    if (len(args) >= 2 and isinstance(args[1], ast.Literal)
+            and isinstance(args[1].value, int) and not isinstance(args[1].value, bool)):
+        return int(args[1].value)
+    return None
 
 
 def forward_reach(name: str, args: tuple) -> int | float:
-    """The maximum forward offset (in periods) from a dirty INPUT cell to a tainted OUTPUT cell:
-    `lag(k)` -> k; a `roll_*`/`decay_linear` window of w -> w-1; unbounded ops -> INF; a
-    duration/non-literal window -> INF (conservative). 0 for non-time-series ops."""
+    """Forward reach (periods) from a dirty input to the furthest tainted output: `lag(k)` -> k;
+    a `roll_*`/`decay_linear` window w -> w-1; a duration/non-literal window or any OTHER time-series op
+    -> INF (widen). 0 for non-time-series ops. Whole-entity (bidirectional) ops are NOT reached via this
+    function - cell_footprint dispatches them to expand_whole_entity."""
     spec = OPS.get(name)
     if spec is None or spec.axis != "time-series":
         return 0
-    if name in _TS_UNBOUNDED:
-        return INF
-    k = None
-    if (len(args) >= 2 and isinstance(args[1], ast.Literal)
-            and isinstance(args[1].value, int) and not isinstance(args[1].value, bool)):
-        k = int(args[1].value)
-    if k is None:
-        return INF  # duration string / computed window -> conservative whole-tail
     if name in _TS_LAG:
-        return k
-    return max(k - 1, 0)  # windowed op reaches t + (w-1)
+        k = _int_window(args)
+        return k if k is not None else INF
+    if name in _TS_WINDOWED:
+        w = _int_window(args)
+        return max(w - 1, 0) if w is not None else INF
+    return INF  # cum/asof/ewm/ttm/trailing + any unclassified time-series op -> conservative
 
 
 @dataclass
@@ -88,9 +98,24 @@ def build_index(panel: pl.DataFrame, by_cols: set[str]) -> PanelIndex:
     return PanelIndex(periods_by_entity, pos, all_at, cell_group, group_members)
 
 
+def expand_whole_entity(cells: set, index: PanelIndex) -> set:
+    """Bidirectional expansion: a dirty input at (e, t) taints EVERY period of entity e (whole-series
+    stats, bucket-broadcast resamples). If the entity is unknown to the panel, keep the cell as-is."""
+    out: set = set()
+    for e, t in cells:
+        ts = index.periods_by_entity.get(e)
+        if ts:
+            out.update((e, tt) for tt in ts)
+        else:
+            out.add((e, t))
+    return out
+
+
 def expand_timeseries(cells: set, reach, index: PanelIndex) -> set:
     """Entity-local forward expansion: a dirty input at (e, t) taints (e, t .. t+reach); reach == INF
-    taints the whole tail of entity e. `reach` is the op's forward reach (see forward_reach)."""
+    taints the whole tail of entity e. `reach` is the op's forward reach (see forward_reach). A dirty
+    cell not locatable in the panel (e.g. a datetime mismatch) widens to the whole entity, never a bare
+    single cell - correctness (over-taint) over precision."""
     if reach == 0:
         return set(cells)
     out: set = set()
@@ -98,7 +123,7 @@ def expand_timeseries(cells: set, reach, index: PanelIndex) -> set:
         ts = index.periods_by_entity.get(e)
         i = index.pos.get((e, t)) if ts is not None else None
         if i is None:
-            out.add((e, t))
+            out.update((e, tt) for tt in ts) if ts else out.add((e, t))  # widen on miss
             continue
         end = len(ts) if reach == INF else min(len(ts), i + int(reach) + 1)
         for j in range(i, end):
@@ -108,16 +133,18 @@ def expand_timeseries(cells: set, reach, index: PanelIndex) -> set:
 
 def expand_group(cells: set, by_col, index: PanelIndex) -> set:
     """Cross-sectional expansion: a dirty (e, t) taints every entity sharing e's `by`-group at t;
-    by_col is None -> every entity at period t (whole-period)."""
+    by_col is None -> every entity at period t (whole-period). An unresolvable group (missing by-value
+    or datetime mismatch) widens to the whole period rather than narrowing to a single cell."""
     out: set = set()
     for e, t in cells:
+        period = index.all_at.get(t, ())
         if by_col is None:
-            out.update((e2, t) for e2 in index.all_at.get(t, ()))
+            out.update((e2, t) for e2 in period)
             continue
         g = index.cell_group.get(by_col, {}).get((e, t))
         members = index.group_members.get(by_col, {}).get((t, g))
-        if members is None:
-            out.add((e, t))
+        if members is None:                       # unresolved group -> widen to the whole period
+            out.update((e2, t) for e2 in period) if period else out.add((e, t))
         else:
             out.update((e2, t) for e2 in members)
     return out
@@ -160,7 +187,10 @@ def cell_footprint(expr, dirty: dict, index: PanelIndex, locals: dict, memo: dic
                 child |= cell_footprint(v, dirty, index, locals, memo)
             axis = OPS[expr.name].axis if expr.name in OPS else "elementwise"
             if axis == "time-series":
-                result = expand_timeseries(child, forward_reach(expr.name, expr.args), index)
+                if expr.name in _TS_WHOLE_ENTITY:
+                    result = expand_whole_entity(child, index)
+                else:
+                    result = expand_timeseries(child, forward_reach(expr.name, expr.args), index)
             elif axis == "cross-sectional":
                 result = expand_group(child, ".".join(expr.by) if expr.by else None, index)
             else:  # elementwise / model

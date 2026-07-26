@@ -4,7 +4,8 @@ import polars as pl
 
 from trail import ast
 from trail.footprint import (
-    INF, build_index, cell_footprint, expand_group, expand_timeseries, forward_reach, model_footprint,
+    INF, build_index, cell_footprint, expand_group, expand_timeseries, expand_whole_entity,
+    forward_reach, model_footprint,
 )
 from trail.pipeline import prepare
 
@@ -57,6 +58,32 @@ def test_expand_group_by_sector_and_whole_period():
     assert expand_group({("B", t[2])}, "meta.sector", idx) == {("A", t[2]), ("B", t[2])}
     assert expand_group({("B", t[2])}, None, idx) == {("A", t[2]), ("B", t[2]), ("C", t[2])}
     assert expand_group({("C", t[2])}, "meta.sector", idx) == {("C", t[2])}   # alone in Energy
+
+
+def test_expand_whole_entity_is_bidirectional():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    assert expand_whole_entity({("A", t[1])}, idx) == {("A", t[0]), ("A", t[1]), ("A", t[2])}
+
+
+def test_expand_group_missing_group_widens_to_period():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    # an entity/period not in the index resolves to no group -> widen to the whole period, not one cell
+    assert expand_group({("Z", t[2])}, "meta.sector", idx) == {("A", t[2]), ("B", t[2]), ("C", t[2])}
+
+
+def test_time_series_ops_never_misclassified_as_bounded():
+    from trail.footprint import _TS_LAG, _TS_WHOLE_ENTITY, _TS_WINDOWED
+    from trail.ops import OPS
+    ts = {n for n, s in OPS.items() if s.axis == "time-series"}
+    assert _TS_WINDOWED <= ts and _TS_LAG <= ts and _TS_WHOLE_ENTITY <= ts
+    assert not (_TS_WINDOWED & _TS_WHOLE_ENTITY) and not (_TS_LAG & _TS_WHOLE_ENTITY)
+    # bidirectional ops must be whole-entity, never treated as a forward window
+    assert {"ts_mean", "resample", "to_annual", "to_quarterly"} <= _TS_WHOLE_ENTITY
+    # any op not explicitly windowed/lag falls through forward_reach to INF (safe widen), never bounded
+    for n in ts - _TS_WINDOWED - _TS_LAG:
+        assert forward_reach(n, ()) == INF
 
 
 def test_cell_footprint_composition():

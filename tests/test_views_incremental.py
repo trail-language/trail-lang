@@ -14,23 +14,28 @@ from trail.source import Capabilities, DataSource, ENTITY_COL, TIME_COL
 
 _T = [dt.datetime(2020, 12, 31), dt.datetime(2021, 12, 31)]
 _SEC = {"A": "Tech", "B": "Tech", "C": "Energy"}
+_EXCH = {"A": "NYSE", "B": "NASDAQ", "C": "NYSE"}
 _BASE = {"A": 10.0, "B": 20.0, "C": 5.0}
-_STATE = {"token": "w0", "overrides": {}, "dirty": set(), "changefeed": True}
+_STATE = {"token": "w0", "overrides": {}, "dirty": set(), "changefeed": True, "sector_overrides": {}}
 
 
 def _reset():
-    _STATE.update(token="w0", overrides={}, dirty=set(), changefeed=True)
+    _STATE.update(token="w0", overrides={}, dirty=set(), changefeed=True, sector_overrides={})
 
 
 def _rev(e, t):
     return _STATE["overrides"].get((e, t), _BASE[e])
 
 
+def _sec(e):
+    return _STATE["sector_overrides"].get(e, _SEC[e])
+
+
 class _Versioned(DataSource):
     name = "vsrc"
 
     def available_fields(self, frequency=None):
-        return {"income.revenue", "meta.sector"}
+        return {"income.revenue", "meta.sector", "meta.exchange"}
 
     def capabilities(self):
         return Capabilities(frequency="annual", provides_meta=True)
@@ -44,7 +49,8 @@ class _Versioned(DataSource):
         return set(_STATE["dirty"]) if cursor != _STATE["token"] else set()
 
     def load(self, request):
-        rows = [{ENTITY_COL: e, TIME_COL: t, "income.revenue": _rev(e, t), "meta.sector": _SEC[e]}
+        rows = [{ENTITY_COL: e, TIME_COL: t, "income.revenue": _rev(e, t),
+                 "meta.sector": _sec(e), "meta.exchange": _EXCH[e]}
                 for e in _SEC for t in _T]
         df = pl.DataFrame(rows)
         if request.entities:
@@ -69,11 +75,12 @@ def _rows(res, col):
             for r in res["records"]}
 
 
-def _inc_vs_full(tmp_path, model, col, token, overrides, dirty, changefeed=True):
+def _inc_vs_full(tmp_path, model, col, token, overrides, dirty, changefeed=True, sector_overrides=None):
     _reset()
     cfg = _cfg(tmp_path)
     run_tool("m", {"config": cfg}, program=model, format="records")            # build at w0
-    _STATE.update(token=token, overrides=overrides, dirty=set(dirty), changefeed=changefeed)
+    _STATE.update(token=token, overrides=overrides, dirty=set(dirty), changefeed=changefeed,
+                  sector_overrides=sector_overrides or {})
     inc = _rows(run_tool("m", {"config": cfg}, program=model, format="records"), col)  # incremental
     drop_tool("m", {"config": cfg})                                            # oracle: full rebuild
     full = _rows(run_tool("m", {"config": cfg}, program=model, format="records"), col)
@@ -118,3 +125,37 @@ def test_no_changefeed_falls_back_to_full(tmp_path):
     inc, full = _inc_vs_full(tmp_path, ZS, "views.m.z", "w1", {("B", _T[1]): 99.0}, set(),
                              changefeed=False)
     assert inc == full and inc
+
+
+def test_whole_entity_op_bidirectional(tmp_path):
+    # ts_mean is a whole-series stat: a change at 2021 also changes the 2020 output (both directions)
+    ts = "track model m at annual { export a = ts_mean(income.revenue) }"
+    inc, full = _inc_vs_full(tmp_path, ts, "views.m.a", "w1", {("B", _T[1]): 99.0}, {("B", _T[1])})
+    assert inc == full and inc
+
+
+def test_sector_reassignment_stays_correct(tmp_path):
+    # B files AND moves Tech->Energy: the old Tech peer A must not keep a stale z-score (group_hash
+    # change forces a full rebuild)
+    inc, full = _inc_vs_full(tmp_path, ZS, "views.m.z", "w1", {("B", _T[1]): 99.0}, {("B", _T[1])},
+                             sector_overrides={"B": "Energy"})
+    assert inc == full and inc
+
+
+def test_nested_distinct_by_stays_correct(tmp_path):
+    # zscore(... by exchange) nested inside (... by sector): two distinct groupings -> full rebuild
+    nest = ("track model m at annual { "
+            "export n = zscore(xs_mean(income.revenue) by meta.exchange) by meta.sector }")
+    inc, full = _inc_vs_full(tmp_path, nest, "views.m.n", "w1", {("B", _T[1]): 99.0}, {("B", _T[1])})
+    assert inc == full and inc
+
+
+def test_entity_scoped_run_does_not_clobber_stored_view(tmp_path):
+    # a scoped run must not overwrite the persisted full-universe frame
+    _reset()
+    cfg = _cfg(tmp_path)
+    run_tool("m", {"config": cfg}, program=ZS, format="records")
+    run_tool("m", {"config": cfg}, program=ZS, format="records", entities=["A"])  # scoped rescore
+    after = run_tool("m", {"config": cfg}, program=ZS, format="records")          # unfiltered
+    assert {r["entity"] for r in after["records"]} == {"A", "B", "C"}             # nothing vanished
+    _reset()

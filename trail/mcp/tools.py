@@ -204,3 +204,49 @@ def fetch_tool(expressions: list[str], data: dict, where: str | None = None, at:
         extra["columns"] = dict(zip(names, expressions))
     return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,
                          extra=extra or None)
+
+
+def _view_store(data: dict):
+    """(store, None) for a {config} data spec, or (None, error-dict) otherwise."""
+    if "config" not in data:
+        return None, {"error": {"code": "E-ARGS", "message": "view tools require a {config} data spec"}}
+    from trail.config import load_config
+    from trail.providers import store_for_config
+    cfg_path = data["config"]
+    return store_for_config(load_config(cfg_path), cfg_path), None
+
+
+def drop_tool(name: str, data: dict) -> dict:
+    """Delete a stored tracked view; its next run recomputes fully. `dropped` is False if absent."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    return {"dropped": store.delete(name)}
+
+
+def views_tool(data: dict) -> dict:
+    """List stored tracked views with a manifest summary."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    out = []
+    for n in store.list():
+        mf = store.manifest(n)
+        if mf is None:
+            continue
+        out.append({"name": n, "kind": mf.kind, "columns": list(mf.columns),
+                    "built_at": mf.built_at, "sources": list(mf.sources)})
+    return {"views": out}
+
+
+def refresh_tool(name: str, data: dict, program: str | None = None,
+                 path: str | None = None) -> dict:
+    """Drop then eagerly rebuild a tracked view. Pass the program/path that declares it."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    store.delete(name)  # force a full rebuild on the run below
+    r = run_tool(name, data, program=program, path=path, format="compact")
+    if "error" in r:
+        return r
+    return {"refreshed": name, "shape": [r.get("total_rows"), len(r.get("columns", []))]}

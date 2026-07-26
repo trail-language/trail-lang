@@ -115,3 +115,21 @@ def _register(server) -> None:
         return tools.fetch_tool(expressions, data, where=where, at=at, offset=offset, limit=limit,
                                 format=format, to_file=to_file, no_stdlib=no_stdlib,
                                 streaming=streaming, entities=entities)
+
+    @server.tool()
+    def drop(name: str, data: dict) -> dict:
+        """Delete a stored tracked view so its next run recomputes fully from the expression. `data`
+        is a {config} spec (the view store lives beside it). Returns {dropped: bool}."""
+        return tools.drop_tool(name, data)
+
+    @server.tool()
+    def views(data: dict) -> dict:
+        """List stored tracked views with their manifest summary (kind, columns, built_at, sources).
+        `data` is a {config} spec."""
+        return tools.views_tool(data)
+
+    @server.tool()
+    def refresh(name: str, data: dict, program: str | None = None, path: str | None = None) -> dict:
+        """Drop then eagerly rebuild a tracked view. Pass the same `program` (inline source) or `path`
+        (.trail file) that declares it, plus a {config} `data` spec."""
+        return tools.refresh_tool(name, data, program=program, path=path)

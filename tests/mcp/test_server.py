@@ -66,7 +66,8 @@ async def test_server_lists_and_calls_eval():
     _register(server)
     tools = await server.list_tools()
     names = {t.name for t in tools}
-    assert {"functions", "schema", "validate", "describe", "eval", "run"} <= names
+    assert {"functions", "schema", "validate", "describe", "eval", "run",
+            "fetch", "drop", "views", "refresh"} <= names
     res = await server.call_tool("eval", {
         "expression": "income.revenue",
         "data": {"rows": [{"entity": "A", "time": "2020-12-31", "income.revenue": 5.0}]},

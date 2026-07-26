@@ -1,4 +1,4 @@
-from trail.mcp.tools import run_tool
+from trail.mcp.tools import drop_tool, refresh_tool, run_tool, views_tool
 from trail.store import LocalDiskViewStore
 
 CONFIG = (
@@ -48,3 +48,37 @@ def test_run_untracked_model_unaffected(tmp_path):
                  program="model plain at annual { export v = income.revenue }", format="records")
     assert "error" not in r and r["records"]
     assert _store(tmp_path).read("plain") is None       # nothing persisted for an untracked model
+
+
+def test_views_list_and_drop(tmp_path):
+    cfg = _config(tmp_path)
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    listed = views_tool({"config": cfg})
+    entry = next(v for v in listed["views"] if v["name"] == "factor")
+    assert entry["kind"] == "model" and entry["columns"] == ["views.factor.v"]
+    assert drop_tool("factor", {"config": cfg})["dropped"] is True
+    assert drop_tool("factor", {"config": cfg})["dropped"] is False       # already gone
+    assert [v["name"] for v in views_tool({"config": cfg})["views"]] == []
+
+
+def test_drop_forces_full_recompute(tmp_path):
+    cfg = _config(tmp_path)
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    built0 = _store(tmp_path).manifest("factor").built_at
+    drop_tool("factor", {"config": cfg})
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")   # rebuilds from scratch
+    assert _store(tmp_path).manifest("factor").built_at != built0
+
+
+def test_refresh_rebuilds(tmp_path):
+    cfg = _config(tmp_path)
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    built0 = _store(tmp_path).manifest("factor").built_at
+    r = refresh_tool("factor", {"config": cfg}, program=MODEL)
+    assert r["refreshed"] == "factor" and r["shape"][0] is not None
+    assert _store(tmp_path).manifest("factor").built_at != built0         # eager rebuild
+
+
+def test_view_tools_require_config():
+    assert drop_tool("x", {"rows": []})["error"]["code"] == "E-ARGS"
+    assert views_tool({"rows": []})["error"]["code"] == "E-ARGS"

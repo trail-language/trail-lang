@@ -58,6 +58,11 @@ class FixtureSource(DataSource):
 
         return Capabilities(frequency="annual", provides_meta=True, provenance="in-memory fixture")
 
+    def freshness_token(self) -> str | None:
+        """Test hook: the coarse freshness token is taken from ``options.freshness`` so tests can
+        flip it to exercise tracked-view recompute-on-change."""
+        return self.options.get("freshness")
+
 
 def fixture(options: dict) -> FixtureSource:
     """Dotted-path factory kept for ``driver: trail.sources.fixture``."""

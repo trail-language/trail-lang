@@ -123,6 +123,13 @@ class DataSource(ABC):
         """Entities this source can serve (optionally within a named universe). Default ``[]``."""
         return []
 
+    def freshness_token(self) -> str | None:
+        """A cheap opaque token summarizing this source's current state. When it changes, tracked
+        views depending on this source are recomputed. ``None`` (default) means 'no freshness signal':
+        such a view is served from the store until its program changes or an explicit refresh. This is
+        the coarse P1 signal; a per-cell changefeed is a later phase."""
+        return None
+
     def close(self) -> None:
         """Release resources (network sessions, file handles). Idempotent; default no-op."""
 

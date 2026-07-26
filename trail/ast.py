@@ -136,6 +136,7 @@ class ModelDecl:
     desc: str | None
     on_missing: str
     statements: tuple["Assignment | ScoreDecl", ...]
+    track: bool = False  # `track model` persists this model as a view (tracked-views feature)
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ class SignalDecl:
     universe: str | None
     frequency: str | None  # None = finest referenced (spec §4.4)
     expr: "Expr"
+    track: bool = False  # `track signal` persists this signal as a view (tracked-views feature)
 
 
 @dataclass(frozen=True)

@@ -59,14 +59,14 @@ start: decl+
 func_def: "def" NAME "(" [NAME ("," NAME)*] ")" "=" expr
 import_decl: "import" STRING
 universe_decl: "universe" NAME "=" dotted ("where" expr)?
-model_decl: "model" NAME ("on" NAME)? ("at" FREQ)? "{" model_stmt+ "}"
+model_decl: TRACK? "model" NAME ("on" NAME)? ("at" FREQ)? "{" model_stmt+ "}"
 ?model_stmt: "desc" STRING                  -> desc_stmt
            | "on_missing" POLICY            -> policy_stmt
            | "export" NAME ("=" expr)?      -> export_stmt
            | "score" NAME "weight" NUMBER "{" score_case+ "else" NUMBER "}" -> score_stmt
            | NAME "=" expr                  -> assign_stmt
 score_case: NUMBER "if" expr
-signal_decl: "signal" NAME ("on" NAME)? ("at" FREQ)? "=" expr
+signal_decl: TRACK? "signal" NAME ("on" NAME)? ("at" FREQ)? "=" expr
 
 strategy_decl: "strategy" NAME "{" strat_field+ "}"
 strat_field: "universe" NAME | "signal" expr | "rebalance" FREQ
@@ -81,6 +81,7 @@ learn_field: "segment" "by" dotted ("," dotted)* | "target" expr
 
 FREQ: "annual" | "quarterly" | "monthly" | "weekly" | "daily" | "hourly" | "minute"
 POLICY: "skip" | "zero" | "median"
+TRACK: "track"
 WEIGHTING: "equal" | "value" | "signal"
 DATE: /\d{4}-\d{2}(-\d{2})?/
 DURATION: /\d+[dmy]/

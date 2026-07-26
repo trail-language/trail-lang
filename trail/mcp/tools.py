@@ -52,6 +52,16 @@ def _validate_or_error(program):
     return None
 
 
+def _serve_view(decl, universes, config_path, entities):
+    """Materialize (if stale) and read back a tracked view's persisted frame."""
+    from trail.config import load_config
+    from trail.providers import store_for_config
+    from trail.views import ViewManager
+    cfg = load_config(config_path)
+    store = store_for_config(cfg, config_path)
+    return ViewManager(store, cfg, config_path).serve(decl, universes, entities=entities)
+
+
 def describe_tool(data: dict, field: str | None = None) -> dict:
     try:
         panel, warns = resolve_panel(data)
@@ -124,11 +134,22 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
     signals = {d.name: d for d in prog.decls if isinstance(d, ast.SignalDecl)}
     universes = {d.name: d for d in prog.decls if isinstance(d, ast.UniverseDecl)}
     if name in models:
-        decl, plan = models[name], compile_model(models[name], universes)
+        decl = models[name]
     elif name in signals:
-        decl, plan = signals[name], compile_signal(signals[name], universes)
+        decl = signals[name]
     else:
         return {"error": {"code": "E-NAME-UNKNOWN", "message": f"no model or signal named '{name}'"}}
+    # A `track`ed decl is served from the view store (built on first use, recomputed when stale),
+    # so a re-run skips the fetch+compute entirely. Requires a {config} data spec (the store lives
+    # beside it); without one, fall through and compute normally.
+    if getattr(decl, "track", False) and "config" in data:
+        try:
+            result = _serve_view(decl, universes, data["config"], entities)
+        except Exception as e:
+            return to_error(e)
+        return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file)
+    plan = compile_model(decl, universes) if isinstance(decl, ast.ModelDecl) \
+        else compile_signal(decl, universes)
     try:
         panel, warns = resolve_panel(data, decl, universes, lazy=True, entities=entities)
         result = plan.run(panel, engine="streaming" if streaming else None)
@@ -183,3 +204,58 @@ def fetch_tool(expressions: list[str], data: dict, where: str | None = None, at:
         extra["columns"] = dict(zip(names, expressions))
     return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file,
                          extra=extra or None)
+
+
+def _view_store(data: dict):
+    """(store, None) for a {config} data spec, or (None, error-dict) otherwise."""
+    if "config" not in data:
+        return None, {"error": {"code": "E-ARGS", "message": "view tools require a {config} data spec"}}
+    from trail.config import ConfigError, load_config
+    from trail.providers import store_for_config
+    cfg_path = data["config"]
+    try:
+        return store_for_config(load_config(cfg_path), cfg_path), None
+    except (ConfigError, OSError) as e:
+        return None, to_error(e)
+
+
+def drop_tool(name: str, data: dict) -> dict:
+    """Delete a stored tracked view; its next run recomputes fully. `dropped` is False if absent."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    try:
+        return {"dropped": store.delete(name)}
+    except ValueError as e:  # invalid/traversing view name
+        return {"error": {"code": "E-VIEW-NAME", "message": str(e)}}
+
+
+def views_tool(data: dict) -> dict:
+    """List stored tracked views with a manifest summary."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    out = []
+    for n in store.list():
+        mf = store.manifest(n)
+        if mf is None:
+            continue
+        out.append({"name": n, "kind": mf.kind, "columns": list(mf.columns),
+                    "built_at": mf.built_at, "sources": list(mf.sources)})
+    return {"views": out}
+
+
+def refresh_tool(name: str, data: dict, program: str | None = None,
+                 path: str | None = None) -> dict:
+    """Drop then eagerly rebuild a tracked view. Pass the program/path that declares it."""
+    store, err = _view_store(data)
+    if err:
+        return err
+    try:
+        store.delete(name)  # force a full rebuild on the run below
+    except ValueError as e:  # invalid/traversing view name
+        return {"error": {"code": "E-VIEW-NAME", "message": str(e)}}
+    r = run_tool(name, data, program=program, path=path, format="compact")
+    if "error" in r:
+        return r
+    return {"refreshed": name, "shape": [r.get("total_rows"), len(r.get("columns", []))]}

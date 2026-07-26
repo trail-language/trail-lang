@@ -17,25 +17,38 @@ from trail.source import ENTITY_COL, TIME_COL
 
 INF = float("inf")
 
-# time-series ops whose lookback is unbounded / whole-entity-tail (no fixed int window arg)
-_UNBOUNDED_TS = frozenset({
+# time-series ops whose lookback is unbounded (any prior input affects every later output)
+_TS_UNBOUNDED = frozenset({
     "cummax", "cumsum", "cumprod", "cummin", "ts_mean", "ts_std", "ts_min", "asof",
-    "ttm", "trailing", "resample", "to_annual", "to_quarterly", "to_monthly", "to_daily",
+    "ewm_mean", "ewm_std", "ttm", "trailing", "resample",
+    "to_annual", "to_quarterly", "to_monthly", "to_daily",
+})
+_TS_LAG = frozenset({"lag"})  # output t reads input t-k -> a dirty input t reaches output t+k
+# windowed ops: output t reads inputs [t-w+1 .. t] -> a dirty input t reaches output t+(w-1)
+_TS_WINDOWED = frozenset({
+    "roll_mean", "roll_sum", "roll_std", "roll_var", "roll_max", "roll_min",
+    "roll_quantile", "roll_median", "roll_skew", "decay_linear",
 })
 
 
-def window_of(name: str, args: tuple) -> int | float:
-    """Static forward window for a time-series op: an int-literal count, or INF for unbounded /
-    duration-string / non-literal windows (conservative). 0 for non-time-series ops."""
+def forward_reach(name: str, args: tuple) -> int | float:
+    """The maximum forward offset (in periods) from a dirty INPUT cell to a tainted OUTPUT cell:
+    `lag(k)` -> k; a `roll_*`/`decay_linear` window of w -> w-1; unbounded ops -> INF; a
+    duration/non-literal window -> INF (conservative). 0 for non-time-series ops."""
     spec = OPS.get(name)
     if spec is None or spec.axis != "time-series":
         return 0
-    if name in _UNBOUNDED_TS:
+    if name in _TS_UNBOUNDED:
         return INF
+    k = None
     if (len(args) >= 2 and isinstance(args[1], ast.Literal)
             and isinstance(args[1].value, int) and not isinstance(args[1].value, bool)):
-        return int(args[1].value)
-    return INF  # duration string / computed arg -> conservative whole-tail
+        k = int(args[1].value)
+    if k is None:
+        return INF  # duration string / computed window -> conservative whole-tail
+    if name in _TS_LAG:
+        return k
+    return max(k - 1, 0)  # windowed op reaches t + (w-1)
 
 
 @dataclass
@@ -75,11 +88,10 @@ def build_index(panel: pl.DataFrame, by_cols: set[str]) -> PanelIndex:
     return PanelIndex(periods_by_entity, pos, all_at, cell_group, group_members)
 
 
-def expand_timeseries(cells: set, w, index: PanelIndex) -> set:
-    """Entity-local forward expansion: a dirty input at (e, t) taints (e, t .. t+w-1); w == INF taints
-    the whole tail of entity e. A time-series op at t' reads back to t'-w+1, so a dirty input at t
-    taints outputs at t .. t+w-1."""
-    if w == 0:
+def expand_timeseries(cells: set, reach, index: PanelIndex) -> set:
+    """Entity-local forward expansion: a dirty input at (e, t) taints (e, t .. t+reach); reach == INF
+    taints the whole tail of entity e. `reach` is the op's forward reach (see forward_reach)."""
+    if reach == 0:
         return set(cells)
     out: set = set()
     for e, t in cells:
@@ -88,7 +100,7 @@ def expand_timeseries(cells: set, w, index: PanelIndex) -> set:
         if i is None:
             out.add((e, t))
             continue
-        end = len(ts) if w == INF else min(len(ts), i + int(w))
+        end = len(ts) if reach == INF else min(len(ts), i + int(reach) + 1)
         for j in range(i, end):
             out.add((e, ts[j]))
     return out
@@ -148,7 +160,7 @@ def cell_footprint(expr, dirty: dict, index: PanelIndex, locals: dict, memo: dic
                 child |= cell_footprint(v, dirty, index, locals, memo)
             axis = OPS[expr.name].axis if expr.name in OPS else "elementwise"
             if axis == "time-series":
-                result = expand_timeseries(child, window_of(expr.name, expr.args), index)
+                result = expand_timeseries(child, forward_reach(expr.name, expr.args), index)
             elif axis == "cross-sectional":
                 result = expand_group(child, ".".join(expr.by) if expr.by else None, index)
             else:  # elementwise / model

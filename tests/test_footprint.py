@@ -4,18 +4,20 @@ import polars as pl
 
 from trail import ast
 from trail.footprint import (
-    INF, build_index, cell_footprint, expand_group, expand_timeseries, model_footprint, window_of,
+    INF, build_index, cell_footprint, expand_group, expand_timeseries, forward_reach, model_footprint,
 )
 from trail.pipeline import prepare
 
 
-def test_window_of_literal_and_unbounded():
+def test_forward_reach_literal_and_unbounded():
     fx = ast.FieldRef(("x",))
-    assert window_of("lag", (fx, ast.Literal(2))) == 2
-    assert window_of("roll_mean", (fx, ast.Literal(4))) == 4
-    assert window_of("ts_mean", (fx,)) == INF
-    assert window_of("roll_mean", (fx, ast.Literal("1y"))) == INF   # duration -> conservative
-    assert window_of("zscore", (fx,)) == 0                          # not time-series
+    assert forward_reach("lag", (fx, ast.Literal(2))) == 2          # output t reads t-2 -> reach 2
+    assert forward_reach("roll_mean", (fx, ast.Literal(4))) == 3    # window 4 -> reaches t+(w-1)
+    assert forward_reach("roll_mean", (fx, ast.Literal(1))) == 0    # window 1 = self
+    assert forward_reach("ts_mean", (fx,)) == INF
+    assert forward_reach("ewm_mean", (fx, ast.Literal(3))) == INF   # exponential -> unbounded
+    assert forward_reach("roll_mean", (fx, ast.Literal("1y"))) == INF   # duration -> conservative
+    assert forward_reach("zscore", (fx,)) == 0                      # not time-series
 
 
 def _panel3():
@@ -39,12 +41,14 @@ def test_build_index_groups_and_periods():
     assert set(idx.group_members["meta.sector"][(t[2], "Energy")]) == {"C"}
 
 
-def test_expand_timeseries_forward_window():
+def test_expand_timeseries_forward_reach():
     panel, t = _panel3()
     idx = build_index(panel, {"meta.sector"})
-    assert expand_timeseries({("A", t[0])}, 2, idx) == {("A", t[0]), ("A", t[1])}
+    assert expand_timeseries({("A", t[0])}, 1, idx) == {("A", t[0]), ("A", t[1])}   # reach 1 -> t..t+1
+    assert expand_timeseries({("A", t[0])}, 2, idx) == {("A", t[0]), ("A", t[1]), ("A", t[2])}
     assert expand_timeseries({("A", t[1])}, INF, idx) == {("A", t[1]), ("A", t[2])}
-    assert expand_timeseries({("A", t[0])}, 0, idx) == {("A", t[0])}   # elementwise passthrough
+    assert expand_timeseries({("A", t[2])}, 5, idx) == {("A", t[2])}   # clamped at series end
+    assert expand_timeseries({("A", t[0])}, 0, idx) == {("A", t[0])}   # reach 0 = self only
 
 
 def test_expand_group_by_sector_and_whole_period():

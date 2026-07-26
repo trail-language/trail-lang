@@ -63,6 +63,15 @@ class FixtureSource(DataSource):
         flip it to exercise tracked-view recompute-on-change."""
         return self.options.get("freshness")
 
+    def changed_since(self, cursor):
+        """Test hook: when ``options.changed_cells`` is a list of ``[entity, "YYYY-MM-DD"]`` pairs,
+        return them as the dirty set; otherwise ``None`` (no changefeed)."""
+        cells = self.options.get("changed_cells")
+        if cells is None:
+            return None
+        import datetime as _dt
+        return {(str(e), _dt.datetime.strptime(t[:10], "%Y-%m-%d")) for e, t in cells}
+
 
 def fixture(options: dict) -> FixtureSource:
     """Dotted-path factory kept for ``driver: trail.sources.fixture``."""

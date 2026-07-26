@@ -130,6 +130,13 @@ class DataSource(ABC):
         the coarse P1 signal; a per-cell changefeed is a later phase."""
         return None
 
+    def changed_since(self, cursor: str | None):
+        """The ``(entity, period-end)`` input cells whose values changed since ``cursor`` (a token
+        previously returned by :meth:`freshness_token`). Return ``None`` (default) when this source
+        has no changefeed - the caller then recomputes the whole view whenever ``freshness_token``
+        moved (the P1 coarse rule). Implementing it enables footprint-scoped incremental recompute."""
+        return None
+
     def close(self) -> None:
         """Release resources (network sessions, file handles). Idempotent; default no-op."""
 

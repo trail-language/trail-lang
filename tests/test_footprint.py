@@ -3,7 +3,7 @@ import datetime as dt
 import polars as pl
 
 from trail import ast
-from trail.footprint import INF, build_index, window_of
+from trail.footprint import INF, build_index, expand_group, expand_timeseries, window_of
 
 
 def test_window_of_literal_and_unbounded():
@@ -34,3 +34,19 @@ def test_build_index_groups_and_periods():
     assert idx.cell_group["meta.sector"][("B", t[2])] == "Tech"
     assert set(idx.group_members["meta.sector"][(t[2], "Tech")]) == {"A", "B"}
     assert set(idx.group_members["meta.sector"][(t[2], "Energy")]) == {"C"}
+
+
+def test_expand_timeseries_forward_window():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    assert expand_timeseries({("A", t[0])}, 2, idx) == {("A", t[0]), ("A", t[1])}
+    assert expand_timeseries({("A", t[1])}, INF, idx) == {("A", t[1]), ("A", t[2])}
+    assert expand_timeseries({("A", t[0])}, 0, idx) == {("A", t[0])}   # elementwise passthrough
+
+
+def test_expand_group_by_sector_and_whole_period():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    assert expand_group({("B", t[2])}, "meta.sector", idx) == {("A", t[2]), ("B", t[2])}
+    assert expand_group({("B", t[2])}, None, idx) == {("A", t[2]), ("B", t[2]), ("C", t[2])}
+    assert expand_group({("C", t[2])}, "meta.sector", idx) == {("C", t[2])}   # alone in Energy

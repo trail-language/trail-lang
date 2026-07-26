@@ -73,3 +73,39 @@ def build_index(panel: pl.DataFrame, by_cols: set[str]) -> PanelIndex:
         cell_group[col] = cg
         group_members[col] = gm
     return PanelIndex(periods_by_entity, pos, all_at, cell_group, group_members)
+
+
+def expand_timeseries(cells: set, w, index: PanelIndex) -> set:
+    """Entity-local forward expansion: a dirty input at (e, t) taints (e, t .. t+w-1); w == INF taints
+    the whole tail of entity e. A time-series op at t' reads back to t'-w+1, so a dirty input at t
+    taints outputs at t .. t+w-1."""
+    if w == 0:
+        return set(cells)
+    out: set = set()
+    for e, t in cells:
+        ts = index.periods_by_entity.get(e)
+        i = index.pos.get((e, t)) if ts is not None else None
+        if i is None:
+            out.add((e, t))
+            continue
+        end = len(ts) if w == INF else min(len(ts), i + int(w))
+        for j in range(i, end):
+            out.add((e, ts[j]))
+    return out
+
+
+def expand_group(cells: set, by_col, index: PanelIndex) -> set:
+    """Cross-sectional expansion: a dirty (e, t) taints every entity sharing e's `by`-group at t;
+    by_col is None -> every entity at period t (whole-period)."""
+    out: set = set()
+    for e, t in cells:
+        if by_col is None:
+            out.update((e2, t) for e2 in index.all_at.get(t, ()))
+            continue
+        g = index.cell_group.get(by_col, {}).get((e, t))
+        members = index.group_members.get(by_col, {}).get((t, g))
+        if members is None:
+            out.add((e, t))
+        else:
+            out.update((e2, t) for e2 in members)
+    return out

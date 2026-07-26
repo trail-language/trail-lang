@@ -3,7 +3,10 @@ import datetime as dt
 import polars as pl
 
 from trail import ast
-from trail.footprint import INF, build_index, expand_group, expand_timeseries, window_of
+from trail.footprint import (
+    INF, build_index, cell_footprint, expand_group, expand_timeseries, model_footprint, window_of,
+)
+from trail.pipeline import prepare
 
 
 def test_window_of_literal_and_unbounded():
@@ -50,3 +53,23 @@ def test_expand_group_by_sector_and_whole_period():
     assert expand_group({("B", t[2])}, "meta.sector", idx) == {("A", t[2]), ("B", t[2])}
     assert expand_group({("B", t[2])}, None, idx) == {("A", t[2]), ("B", t[2]), ("C", t[2])}
     assert expand_group({("C", t[2])}, "meta.sector", idx) == {("C", t[2])}   # alone in Energy
+
+
+def test_cell_footprint_composition():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    dirty = {"income.revenue": {("B", t[2])}}
+    prog = prepare("signal s at annual = zscore(lag(income.revenue, 1)) by meta.sector", stdlib=False)
+    sig = next(d for d in prog.decls if isinstance(d, ast.SignalDecl))
+    # lag keeps B/2021 entity-local (t is the last period, so no forward spill), then sector -> A,B
+    assert cell_footprint(sig.expr, dirty, idx, {}, {}) == {("A", t[2]), ("B", t[2])}
+
+
+def test_model_footprint_unions_exports():
+    panel, t = _panel3()
+    idx = build_index(panel, {"meta.sector"})
+    dirty = {"income.revenue": {("C", t[2])}}
+    prog = prepare("model m at annual { export v = zscore(income.revenue) by meta.sector }",
+                   stdlib=False)
+    m = next(d for d in prog.decls if isinstance(d, ast.ModelDecl))
+    assert model_footprint(m, dirty, idx) == {("C", t[2])}   # C alone in Energy

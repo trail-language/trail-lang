@@ -109,3 +109,71 @@ def expand_group(cells: set, by_col, index: PanelIndex) -> set:
         else:
             out.update((e2, t) for e2 in members)
     return out
+
+
+def cell_footprint(expr, dirty: dict, index: PanelIndex, locals: dict, memo: dict) -> set:
+    """Output cells of `expr` tainted by the dirty INPUT cells in `dirty` (field-column -> cell set).
+    Post-order walk; each op maps its children's cells per its axis rule."""
+    if expr is None:
+        return set()
+    key = id(expr)
+    if key in memo:
+        return memo[key]
+    match expr:
+        case ast.Literal():
+            result: set = set()
+        case ast.FieldRef():
+            result = set(dirty.get(expr.column, ()))
+        case ast.NameRef():
+            loc = locals.get(expr.name)
+            result = cell_footprint(loc, dirty, index, locals, memo) if loc is not None else set()
+        case ast.BinOp() | ast.Compare() | ast.BoolOp() | ast.Coalesce():
+            result = (cell_footprint(expr.left, dirty, index, locals, memo)
+                      | cell_footprint(expr.right, dirty, index, locals, memo))
+        case ast.In():
+            result = cell_footprint(expr.item, dirty, index, locals, memo)
+            for o in expr.options:
+                result |= cell_footprint(o, dirty, index, locals, memo)
+        case ast.Not() | ast.Neg():
+            result = cell_footprint(expr.operand, dirty, index, locals, memo)
+        case ast.Ternary():
+            result = (cell_footprint(expr.value, dirty, index, locals, memo)
+                      | cell_footprint(expr.cond, dirty, index, locals, memo)
+                      | cell_footprint(expr.orelse, dirty, index, locals, memo))
+        case ast.Call():
+            child: set = set()
+            for a in expr.args:
+                child |= cell_footprint(a, dirty, index, locals, memo)
+            for _, v in expr.kwargs:
+                child |= cell_footprint(v, dirty, index, locals, memo)
+            axis = OPS[expr.name].axis if expr.name in OPS else "elementwise"
+            if axis == "time-series":
+                result = expand_timeseries(child, window_of(expr.name, expr.args), index)
+            elif axis == "cross-sectional":
+                result = expand_group(child, ".".join(expr.by) if expr.by else None, index)
+            else:  # elementwise / model
+                result = child
+        case _:
+            result = set()
+    memo[key] = result
+    return result
+
+
+def model_footprint(decl, dirty: dict, index: PanelIndex) -> set:
+    """Union of the footprints of a model's exports (locals resolved), or a signal's expression."""
+    memo: dict = {}
+    if isinstance(decl, ast.SignalDecl):
+        return cell_footprint(decl.expr, dirty, index, {}, memo)
+    locals = {s.name: s.expr for s in decl.statements
+              if isinstance(s, ast.Assignment) and not s.export}
+    out: set = set()
+    for s in decl.statements:
+        if isinstance(s, ast.Assignment) and s.export:
+            expr = s.expr if s.expr is not None else locals.get(s.name)
+            out |= cell_footprint(expr, dirty, index, locals, memo)
+        elif isinstance(s, ast.ScoreDecl):  # a scored output column; cases + default are elementwise
+            for c in s.cases:
+                out |= cell_footprint(c.value, dirty, index, locals, memo)
+                out |= cell_footprint(c.cond, dirty, index, locals, memo)
+            out |= cell_footprint(s.default, dirty, index, locals, memo)
+    return out

@@ -67,7 +67,7 @@ VIEW_NAMESPACE = "views"
 
 
 def is_field(column: str) -> bool:
-    if column.split(".", 1)[0] == VIEW_NAMESPACE:
+    if column.startswith(VIEW_NAMESPACE + "."):   # a dotted view ref (`views.<name>`), not bare `views`
         return True
     return column in _CORE or column in _plugin_fields()
 

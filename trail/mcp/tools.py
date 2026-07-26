@@ -210,10 +210,13 @@ def _view_store(data: dict):
     """(store, None) for a {config} data spec, or (None, error-dict) otherwise."""
     if "config" not in data:
         return None, {"error": {"code": "E-ARGS", "message": "view tools require a {config} data spec"}}
-    from trail.config import load_config
+    from trail.config import ConfigError, load_config
     from trail.providers import store_for_config
     cfg_path = data["config"]
-    return store_for_config(load_config(cfg_path), cfg_path), None
+    try:
+        return store_for_config(load_config(cfg_path), cfg_path), None
+    except (ConfigError, OSError) as e:
+        return None, to_error(e)
 
 
 def drop_tool(name: str, data: dict) -> dict:
@@ -221,7 +224,10 @@ def drop_tool(name: str, data: dict) -> dict:
     store, err = _view_store(data)
     if err:
         return err
-    return {"dropped": store.delete(name)}
+    try:
+        return {"dropped": store.delete(name)}
+    except ValueError as e:  # invalid/traversing view name
+        return {"error": {"code": "E-VIEW-NAME", "message": str(e)}}
 
 
 def views_tool(data: dict) -> dict:
@@ -245,7 +251,10 @@ def refresh_tool(name: str, data: dict, program: str | None = None,
     store, err = _view_store(data)
     if err:
         return err
-    store.delete(name)  # force a full rebuild on the run below
+    try:
+        store.delete(name)  # force a full rebuild on the run below
+    except ValueError as e:  # invalid/traversing view name
+        return {"error": {"code": "E-VIEW-NAME", "message": str(e)}}
     r = run_tool(name, data, program=program, path=path, format="compact")
     if "error" in r:
         return r

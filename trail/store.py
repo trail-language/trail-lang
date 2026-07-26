@@ -8,10 +8,23 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 
 import polars as pl
+
+from trail.config import ConfigError
+
+#: a view name becomes a filename under the store dir, so it must be a bare identifier — no path
+#: separators or `..` (a raw MCP-supplied name reaches delete()/refresh(); guard against traversal).
+_VIEW_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _check_name(name: str) -> str:
+    if not isinstance(name, str) or not _VIEW_NAME_RE.match(name):
+        raise ValueError(f"E-VIEW-NAME invalid view name {name!r}; must match [A-Za-z0-9_-]+")
+    return name
 
 
 @dataclass(frozen=True)
@@ -25,6 +38,7 @@ class Manifest:
     freshness: dict[str, str | None]   # source name -> freshness token at build time (None = no signal)
     built_at: str                      # ISO-8601 UTC
     columns: tuple[str, ...]           # physical view columns, e.g. ("views.factor.value", ...)
+    panel_key: str = ""                # fingerprint of frame-affecting config knobs (periods/pit/strict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -35,7 +49,7 @@ class Manifest:
             name=d["name"], kind=d["kind"], exports=tuple(d["exports"]),
             expr_hash=d["expr_hash"], sources=tuple(d["sources"]),
             freshness=dict(d["freshness"]), built_at=d["built_at"],
-            columns=tuple(d["columns"]),
+            columns=tuple(d["columns"]), panel_key=d.get("panel_key", ""),
         )
 
 
@@ -69,14 +83,16 @@ class LocalDiskViewStore(ViewStore):
     def __init__(self, options: dict | None = None) -> None:
         options = options or {}
         self.namespace = options.get("namespace", "views")
+        if not options.get("dir"):
+            raise ConfigError("E-PROVIDER-OPTIONS local-disk view store requires options.dir")
         self.dir = pathlib.Path(options["dir"])
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _frame_path(self, name: str) -> pathlib.Path:
-        return self.dir / f"{name}.parquet"
+        return self.dir / f"{_check_name(name)}.parquet"
 
     def _manifest_path(self, name: str) -> pathlib.Path:
-        return self.dir / f"{name}.json"
+        return self.dir / f"{_check_name(name)}.json"
 
     def read(self, name: str) -> pl.DataFrame | None:
         p = self._frame_path(name)
@@ -91,8 +107,10 @@ class LocalDiskViewStore(ViewStore):
         self._manifest_path(name).write_text(json.dumps(manifest.to_dict()))
 
     def delete(self, name: str) -> bool:
+        # unlink the manifest first, so a crash mid-delete never leaves a manifest without its frame
+        # (which is_stale would read as "fresh" while the frame is gone)
         existed = False
-        for p in (self._frame_path(name), self._manifest_path(name)):
+        for p in (self._manifest_path(name), self._frame_path(name)):
             if p.exists():
                 p.unlink()
                 existed = True

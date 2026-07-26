@@ -34,6 +34,13 @@ def _bound_universe(decl, universes):
     return None
 
 
+def _panel_key(config) -> str:
+    """Fingerprint of the config knobs that change the loaded frame (period window, PIT placement,
+    strict conformance). A view built under one panel config must not be served under another —
+    these are part of the view's identity, not just the declaration."""
+    return repr((config.periods, config.pit, config.strict))
+
+
 def expr_hash(decl, universes) -> str:
     """A stable hash of the scoped computation (universe chain + decl body), independent of the view
     name. A mismatch against a stored manifest forces a full rebuild (handles edits + schema drift)."""
@@ -58,21 +65,33 @@ class ViewManager:
     def _source_tokens(self) -> dict[str, str | None]:
         toks: dict[str, str | None] = {}
         for name, spec in self.config.sources.items():
+            src = None
             try:
-                toks[name] = resolve_driver(spec.driver)(spec.options).freshness_token()
+                src = resolve_driver(spec.driver)(spec.options)
+                toks[name] = src.freshness_token()
             except Exception:
                 toks[name] = None
+            finally:
+                if src is not None:
+                    try:
+                        src.close()
+                    except Exception:
+                        pass
         return toks
 
     def is_stale(self, decl, universes) -> bool:
         mf = self.store.manifest(decl.name)
         if mf is None or mf.expr_hash != expr_hash(decl, universes):
             return True
+        if mf.panel_key != _panel_key(self.config):   # period window / pit / strict changed
+            return True
         return self._source_tokens() != mf.freshness
 
     def build_frame(self, decl, universes, entities):
         from trail.mcp._config_data import resolve_config_panel  # heavy import, kept lazy
-        panel, _ = resolve_config_panel(self.config_path, decl, universes, entities=entities)
+        # fresh=True bypasses the process-level panel memo: a rebuild is exactly when we must observe
+        # the current config/data, not a panel cached under an older period window or data version.
+        panel, _ = resolve_config_panel(self.config_path, decl, universes, entities=entities, fresh=True)
         if isinstance(decl, ast.ModelDecl):
             plan = compile_model(decl, universes)
             exports, kind = plan.exports, "model"
@@ -88,7 +107,7 @@ class ViewManager:
             sources=tuple(self.config.sources.keys()),
             freshness=self._source_tokens(),
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
-            columns=tuple(cols),
+            columns=tuple(cols), panel_key=_panel_key(self.config),
         )
         return result, mf
 
@@ -106,7 +125,10 @@ class ViewManager:
     def serve(self, decl, universes, entities=None):
         """Return `decl`'s persisted frame, recomputing + repersisting first only if it is stale.
         The lazy pull: a reference to a tracked view triggers recompute-on-change, then reads back."""
-        if self.is_stale(decl, universes):
-            frame, mf = self.build_frame(decl, universes, entities)
-            self.store.write(decl.name, frame, mf)
-        return self.store.read(decl.name)
+        if not self.is_stale(decl, universes):
+            cached = self.store.read(decl.name)
+            if cached is not None:                 # a fresh manifest whose frame vanished -> rebuild
+                return cached
+        frame, mf = self.build_frame(decl, universes, entities)
+        self.store.write(decl.name, frame, mf)
+        return frame

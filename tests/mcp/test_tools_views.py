@@ -84,6 +84,47 @@ def test_view_tools_require_config():
     assert views_tool({"rows": []})["error"]["code"] == "E-ARGS"
 
 
+def test_config_panel_edit_triggers_recompute(tmp_path):
+    # H1/M2: editing the panel window is part of the view's identity; a stale frame must not be served,
+    # and the rebuild must observe the NEW window (not a cached panel).
+    p = tmp_path / "trail.yaml"
+    store = _store(tmp_path)
+
+    def write(periods):
+        p.write_text("sources:\n  fixture:\n    driver: trail.sources.fixture\n"
+                     "precedence:\n  default: [fixture]\n"
+                     f"panel:\n  periods: {periods}\n")
+        return str(p)
+
+    run_tool("factor", {"config": write("[2019, 2022]")}, program=MODEL, format="records")
+    m0 = store.manifest("factor")
+    r = run_tool("factor", {"config": write("[2020, 2021]")}, program=MODEL, format="records")
+    m1 = store.manifest("factor")
+    assert m1.panel_key != m0.panel_key and m1.built_at != m0.built_at   # H1: recomputed
+    years = {rec["time"][:4] for rec in r["records"]}
+    assert years and years <= {"2020", "2021"}                          # M2: fresh narrow panel
+
+
+def test_drop_rejects_traversing_name(tmp_path):
+    # H2: a raw MCP-supplied name must not escape the store dir
+    victim = tmp_path / "victim.parquet"
+    victim.write_text("x")
+    cfg = _config(tmp_path)
+    r = drop_tool("../victim", {"config": cfg})
+    assert r["error"]["code"] == "E-VIEW-NAME"
+    assert victim.exists()                                              # untouched
+
+
+def test_provider_without_dir_returns_structured_error(tmp_path):
+    # M1: a misconfigured provider must not crash with an uncaught KeyError
+    p = tmp_path / "trail.yaml"
+    p.write_text("sources:\n  fixture:\n    driver: trail.sources.fixture\n"
+                 "precedence:\n  default: [fixture]\n"
+                 "providers:\n  views:\n    driver: views_local\n")
+    r = views_tool({"config": str(p)})
+    assert "error" in r
+
+
 def test_lifecycle_persist_reuse_drop_recompute(tmp_path):
     # day 1 — build + persist
     cfg = _config(tmp_path, "t0")

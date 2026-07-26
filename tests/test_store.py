@@ -42,3 +42,18 @@ def test_view_columns():
 def test_manifest_roundtrip():
     mf = _mf(["views.v"])
     assert Manifest.from_dict(mf.to_dict()) == mf
+
+
+def test_store_rejects_traversing_names(tmp_path):
+    import pytest
+    s = LocalDiskViewStore({"dir": str(tmp_path)})
+    for bad in ("../escape", "a/b", "with.dot", "with space"):
+        with pytest.raises(ValueError, match="E-VIEW-NAME"):
+            s.delete(bad)
+
+
+def test_store_requires_dir():
+    import pytest
+    from trail.config import ConfigError
+    with pytest.raises(ConfigError, match="E-PROVIDER-OPTIONS"):
+        LocalDiskViewStore({"namespace": "views"})

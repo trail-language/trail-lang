@@ -17,6 +17,12 @@ def test_non_views_unknown_field_still_rejected():
     assert schema.is_field("nope.unknown") is False
 
 
+def test_bare_views_token_is_not_a_field():
+    # only dotted `views.<name>` refs are valid; a bare `views` must not over-accept
+    assert schema.is_field("views") is False
+    assert schema.is_field("views.x") is True
+
+
 def test_views_reference_validates_without_field_error():
     codes = _error_codes("universe u = stocks\nsignal top on u at annual = views.factor.value")
     assert "E-FIELD-UNKNOWN" not in codes

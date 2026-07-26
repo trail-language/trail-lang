@@ -52,7 +52,7 @@ def _load(config, fields: frozenset[str], freq, align_overrides,
 
 
 def resolve_config_panel(config_path, decl, universes,
-                         entities=None) -> tuple[pl.DataFrame, list[str]]:
+                         entities=None, fresh=False) -> tuple[pl.DataFrame, list[str]]:
     config = load_config(config_path)
     if decl is None:
         fields = frozenset(_all_fields(config))
@@ -71,7 +71,9 @@ def resolve_config_panel(config_path, decl, universes,
     # serving it to a later unscoped request would silently answer from a subset of the universe.
     scope = tuple(sorted(entities)) if entities else None
     key = (os.path.abspath(config_path), fields, freq, scope)
-    if key not in _CACHE:
+    # `fresh` forces a reload (and refreshes the memo): callers that must observe current config/data
+    # rather than a panel cached under an older period window or data version pass fresh=True.
+    if fresh or key not in _CACHE:
         panel, warns = _load(config, fields, freq, aligns, entities=entities)
         _CACHE[key] = panel
         return panel, warns

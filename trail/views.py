@@ -15,20 +15,22 @@ from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
 from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
-from trail.source import ENTITY_COL
+from trail.source import ENTITY_COL, TIME_COL
 from trail.store import Manifest, ViewStore, view_columns
 
 
 def _group_signature(panel, by_cols) -> dict:
-    """Per by-column hash of the entity->group mapping. A grouping change (e.g. a sector
+    """Per by-column hash of the (entity, period)->group mapping. A grouping change (e.g. a sector
     reclassification) is invisible to a fresh panel's group membership, so it must invalidate the
-    incremental path — a mismatch against the stored hash forces a full rebuild."""
+    incremental path — a mismatch against the stored hash forces a full rebuild. Keyed by (entity,
+    time, group) so a time-varying grouping that permutes assignments can't hash-match by accident."""
     out: dict = {}
     for col in by_cols:
         if col in panel.columns:
-            pairs = sorted(set(zip(panel.get_column(ENTITY_COL).to_list(),
-                                   panel.get_column(col).to_list())))
-            out[col] = hashlib.sha256(repr(pairs).encode()).hexdigest()[:16]
+            rows = sorted(set(zip(panel.get_column(ENTITY_COL).to_list(),
+                                  panel.get_column(TIME_COL).to_list(),
+                                  panel.get_column(col).to_list())))
+            out[col] = hashlib.sha256(repr(rows).encode()).hexdigest()[:16]
     return out
 
 
@@ -185,11 +187,13 @@ class ViewManager:
 
     def materialize(self, program, universes, entities=None) -> list[str]:
         """Build every stale tracked view in `program`, writing each to the store. Returns the names
-        that were (re)computed; an empty list means all tracked views were served from the store."""
+        that were (re)computed; an empty list means all tracked views were served from the store.
+        `entities` is intentionally ignored for the persisted artifact: a tracked view is always the
+        full universe, so a scoped request can never overwrite it with a subset."""
         built = []
         for decl in self.tracked(program):
             if self.is_stale(decl, universes):
-                self._full_build(decl, universes, entities)
+                self._full_build(decl, universes, None)
                 built.append(decl.name)
         return built
 

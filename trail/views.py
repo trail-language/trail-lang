@@ -2,9 +2,9 @@
 the declaration's AST and its sources' freshness tokens are unchanged, else recomputing and
 re-persisting. Lazy and pull-based — nothing runs until a reference materializes it.
 
-P1 scope: staleness is coarse (declaration hash + per-source freshness token); a whole view is
-recomputed when any configured source's token changes. Per-cell change detection and footprint-scoped
-recompute are a later phase. See docs/tracked-views design.
+Staleness = declaration hash + panel-config fingerprint + per-source freshness. When a dep source
+exposes a changefeed (`changed_since`), a reference recomputes only the affected footprint (the dirty
+entities' cells); without one, it falls back to a whole-view rebuild. See docs/tracked-views design.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import hashlib
 
 from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
+from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
 from trail.store import Manifest, ViewStore, view_columns
 
@@ -54,6 +55,50 @@ def expr_hash(decl, universes) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def _by_fields(decl) -> set[tuple]:
+    """Every `by`-grouping field tuple used anywhere in a decl's expressions (post-expansion), so the
+    footprint index can precompute those groups' membership."""
+    found: set = set()
+
+    def walk(e):
+        match e:
+            case ast.Call():
+                if e.by:
+                    found.add(e.by)
+                for a in e.args:
+                    walk(a)
+                for _, v in e.kwargs:
+                    walk(v)
+            case ast.BinOp() | ast.Compare() | ast.BoolOp() | ast.Coalesce():
+                walk(e.left)
+                walk(e.right)
+            case ast.In():
+                walk(e.item)
+                for o in e.options:
+                    walk(o)
+            case ast.Not() | ast.Neg():
+                walk(e.operand)
+            case ast.Ternary():
+                walk(e.value)
+                walk(e.cond)
+                walk(e.orelse)
+
+    exprs: list = []
+    if isinstance(decl, ast.SignalDecl):
+        exprs = [decl.expr]
+    else:
+        for s in decl.statements:
+            if isinstance(s, ast.Assignment) and s.expr is not None:
+                exprs.append(s.expr)
+            elif isinstance(s, ast.ScoreDecl):
+                for c in s.cases:
+                    exprs += [c.value, c.cond]
+                exprs.append(s.default)
+    for e in exprs:
+        walk(e)
+    return found
+
+
 class ViewManager:
     """Owns the persist/serve/recompute decision for tracked views under one config + store."""
 
@@ -91,21 +136,8 @@ class ViewManager:
             return True
         return self._source_tokens() != mf.freshness
 
-    def build_frame(self, decl, universes, entities):
-        from trail.mcp._config_data import resolve_config_panel  # heavy import, kept lazy
-        # fresh=True bypasses the process-level panel memo: a rebuild is exactly when we must observe
-        # the current config/data, not a panel cached under an older period window or data version.
-        panel, _ = resolve_config_panel(self.config_path, decl, universes, entities=entities, fresh=True)
-        if isinstance(decl, ast.ModelDecl):
-            plan = compile_model(decl, universes)
-            exports, kind = plan.exports, "model"
-        else:
-            plan = compile_signal(decl, universes)
-            exports, kind = (decl.name,), "signal"
-        result = plan.run(panel)
-        cols = view_columns(kind, decl.name, exports, self.store.namespace)
-        result = result.rename({e: c for e, c in zip(exports, cols)})
-        mf = Manifest(
+    def _manifest(self, decl, universes, kind, exports, cols) -> Manifest:
+        return Manifest(
             name=decl.name, kind=kind, exports=tuple(exports),
             expr_hash=expr_hash(decl, universes),
             sources=tuple(self.config.sources.keys()),
@@ -113,7 +145,27 @@ class ViewManager:
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
         )
-        return result, mf
+
+    def _compiled(self, decl, universes):
+        if isinstance(decl, ast.ModelDecl):
+            plan = compile_model(decl, universes)
+            return plan, plan.exports, "model"
+        return compile_signal(decl, universes), (decl.name,), "signal"
+
+    def build_frame(self, decl, universes, entities):
+        from trail.mcp._config_data import resolve_config_panel  # heavy import, kept lazy
+        # fresh=True bypasses the process-level panel memo: a rebuild is exactly when we must observe
+        # the current config/data, not a panel cached under an older period window or data version.
+        panel, _ = resolve_config_panel(self.config_path, decl, universes, entities=entities, fresh=True)
+        plan, exports, kind = self._compiled(decl, universes)
+        cols = view_columns(kind, decl.name, exports, self.store.namespace)
+        result = plan.run(panel).rename({e: c for e, c in zip(exports, cols)})
+        return result, self._manifest(decl, universes, kind, exports, cols)
+
+    def _full_build(self, decl, universes, entities):
+        frame, mf = self.build_frame(decl, universes, entities)
+        self.store.write(decl.name, frame, mf)
+        return frame
 
     def materialize(self, program, universes, entities=None) -> list[str]:
         """Build every stale tracked view in `program`, writing each to the store. Returns the names
@@ -121,18 +173,76 @@ class ViewManager:
         built = []
         for decl in self.tracked(program):
             if self.is_stale(decl, universes):
-                frame, mf = self.build_frame(decl, universes, entities)
-                self.store.write(decl.name, frame, mf)
+                self._full_build(decl, universes, entities)
                 built.append(decl.name)
         return built
 
+    # --- incremental recompute (P2) ---------------------------------------------------------------
+    def _detect_dirty(self, mf):
+        """Dirty inputs since the manifest's cursors, as ``{field_col: {(entity, time), …}}``.
+        ``None`` = nothing changed; the string ``"COARSE"`` = a dep source changed but offers no
+        changefeed (or errored), so the caller must rebuild the whole view."""
+        dirty: dict = {}
+        changed_any = False
+        for name in mf.sources:
+            spec = self.config.sources.get(name)
+            if spec is None:
+                continue
+            src = None
+            try:
+                src = resolve_driver(spec.driver)(spec.options)
+                cur = mf.freshness.get(name)
+                cells = src.changed_since(cur)
+                if cells is None:                       # no changefeed -> coarse
+                    if src.freshness_token() != cur:
+                        return "COARSE"
+                    continue
+                if cells:
+                    changed_any = True
+                    for f in src.available_fields():    # a filing dirties all of that entity's fields
+                        dirty.setdefault(f, set()).update(cells)
+            except Exception:
+                return "COARSE"
+            finally:
+                if src is not None:
+                    try:
+                        src.close()
+                    except Exception:
+                        pass
+        return dirty if changed_any else None
+
+    def _recompute_merge(self, decl, universes, dirty):
+        from trail.mcp._config_data import resolve_config_panel
+        # cheap universe-wide panel for group membership + period grids (by-fields carry the grouping)
+        prop_panel, _ = resolve_config_panel(self.config_path, decl, universes, fresh=True)
+        index = build_index(prop_panel, {".".join(b) for b in _by_fields(decl)})
+        footprint = model_footprint(decl, dirty, index)
+        if not footprint:
+            return self.store.read(decl.name)
+        e_f = sorted({e for e, _ in footprint})
+        # heavy recompute, scoped to just the footprint entities (complete groups at the dirty periods)
+        sub, _ = resolve_config_panel(self.config_path, decl, universes, entities=e_f, fresh=True)
+        plan, exports, kind = self._compiled(decl, universes)
+        cols = view_columns(kind, decl.name, exports, self.store.namespace)
+        res = plan.run(sub).rename({e: c for e, c in zip(exports, cols)})
+        merged = replace_rows(self.store.read(decl.name), res, footprint)
+        self.store.write(decl.name, merged, self._manifest(decl, universes, kind, exports, cols))
+        return merged
+
     def serve(self, decl, universes, entities=None):
-        """Return `decl`'s persisted frame, recomputing + repersisting first only if it is stale.
-        The lazy pull: a reference to a tracked view triggers recompute-on-change, then reads back."""
-        if not self.is_stale(decl, universes):
+        """Return `decl`'s persisted frame. Rebuild fully on a recipe change or an entity-scoped
+        request; otherwise consult the source changefeed — recompute only the dirty footprint when one
+        exists, else a full rebuild. Serve the stored frame unchanged when nothing changed."""
+        mf = self.store.manifest(decl.name)
+        if (mf is None or mf.expr_hash != expr_hash(decl, universes)
+                or mf.panel_key != _panel_key(self.config)):
+            return self._full_build(decl, universes, entities)
+        if entities is not None:                    # an entity-scoped request must not merge a subset
+            return self._full_build(decl, universes, entities)
+        dirty = self._detect_dirty(mf)
+        if dirty is None:                           # nothing changed -> serve stored (rebuild if gone)
             cached = self.store.read(decl.name)
-            if cached is not None:                 # a fresh manifest whose frame vanished -> rebuild
-                return cached
-        frame, mf = self.build_frame(decl, universes, entities)
-        self.store.write(decl.name, frame, mf)
-        return frame
+            return cached if cached is not None else self._full_build(decl, universes, entities)
+        if dirty == "COARSE":                       # a changefeed-less source moved -> full rebuild
+            return self._full_build(decl, universes, entities)
+        return self._recompute_merge(decl, universes, dirty)

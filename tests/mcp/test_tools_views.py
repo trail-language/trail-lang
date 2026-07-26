@@ -35,7 +35,7 @@ def test_run_tracked_model_persists_and_serves(tmp_path):
 
 
 def test_run_tracked_model_recomputes_on_token_change(tmp_path):
-    r1 = run_tool("factor", {"config": _config(tmp_path, "t0")}, program=MODEL, format="records")
+    run_tool("factor", {"config": _config(tmp_path, "t0")}, program=MODEL, format="records")
     built0 = _store(tmp_path).manifest("factor").built_at
     r2 = run_tool("factor", {"config": _config(tmp_path, "t1")}, program=MODEL, format="records")
     assert _store(tmp_path).manifest("factor").built_at != built0   # token changed -> recompute

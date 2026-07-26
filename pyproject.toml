@@ -42,6 +42,11 @@ trail = "trail.cli:main"
 [project.entry-points."trail.sources"]
 fixture = "trail.sources:FixtureSource"
 
+# Built-in writeable view-store providers (tracked-view persistence). Third-party stores register
+# additional drivers under the same group.
+[project.entry-points."trail.providers"]
+views_local = "trail.store:LocalDiskViewStore"
+
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.8", "pandas>=2.2", "pyarrow>=17", "mcp>=1.2.0", "pytest-asyncio>=0.24"]
 

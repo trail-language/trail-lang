@@ -24,6 +24,15 @@ class SourceSpec:
 
 
 @dataclass(frozen=True)
+class ProviderSpec:
+    """A writeable view-store provider (parallel to SourceSpec). `name` doubles as the namespace
+    tracked views are referenced under (e.g. `views.*`)."""
+    name: str
+    driver: str
+    options: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Config:
     sources: dict[str, SourceSpec]
     precedence: dict[str, list[str]]
@@ -35,6 +44,9 @@ class Config:
     #: where a source supplies one (lookahead-safe); "naive" = ignore coordinates and place every
     #: value at its period-end (pure fundamental analysis). A source may also set options.pit.
     pit: str = "auto"
+    #: writeable view-store providers (tracked-view persistence). Optional; the runtime auto-provides
+    #: a local-disk store when empty. A provider name doubles as a field namespace (e.g. `views.*`).
+    providers: dict[str, ProviderSpec] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # a source name is a verbatim `#source` column tag, so guard it on EVERY construction
@@ -44,6 +56,12 @@ class Config:
                 raise ConfigError(
                     f"E-SOURCE-NAME source name {name!r} is invalid; a source name must match "
                     f"[A-Za-z0-9_-]+ (no '.', '@', or '#') so the #source column tag stays unambiguous"
+                )
+        # a provider name doubles as a field namespace (`views.*`), so it must be a bare identifier
+        for name in self.providers:
+            if not _SOURCE_NAME_RE.match(name):
+                raise ConfigError(
+                    f"E-PROVIDER-NAME provider name {name!r} is invalid; must match [A-Za-z0-9_-]+"
                 )
 
 
@@ -76,6 +94,10 @@ def load_config(path: str | None = None) -> Config:
                 raise ConfigError(
                     f"E-SOURCE-UNKNOWN precedence.{ns} references undeclared source '{s}'"
                 )
+    providers = {
+        name: ProviderSpec(name, spec["driver"], spec.get("options") or {})
+        for name, spec in (raw.get("providers") or {}).items()
+    }
     panel = raw.get("panel") or {}
     p = panel.get("periods")
     periods = (int(p[0]), int(p[1])) if p else None
@@ -83,4 +105,4 @@ def load_config(path: str | None = None) -> Config:
     pit = str(panel.get("pit", "auto")).lower()
     if pit not in ("auto", "naive"):
         raise ConfigError(f"panel.pit must be 'auto' or 'naive', got {pit!r}")
-    return Config(sources, precedence, periods, strict, pit)
+    return Config(sources, precedence, periods, strict, pit, providers)

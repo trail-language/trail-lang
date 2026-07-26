@@ -30,6 +30,33 @@ def test_default_config_when_no_file(tmp_path, monkeypatch):
     assert "fixture" in cfg.sources and cfg.precedence["default"] == ["fixture"]
 
 
+def test_load_config_parses_providers(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text(
+        "sources:\n  fixture:\n    driver: trail.sources.fixture\n"
+        "precedence:\n  default: [fixture]\n"
+        "providers:\n  views:\n    driver: views_local\n    options: {dir: /tmp/v}\n"
+    )
+    cfg = load_config(str(p))
+    assert cfg.providers["views"].driver == "views_local"
+    assert cfg.providers["views"].options["dir"] == "/tmp/v"
+
+
+def test_load_config_no_providers_is_empty(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("sources:\n  fixture:\n    driver: trail.sources.fixture\nprecedence:\n  default: [fixture]\n")
+    assert load_config(str(p)).providers == {}
+
+
+def test_invalid_provider_name_rejected():
+    from trail.config import Config, ProviderSpec, SourceSpec
+    with pytest.raises(ConfigError) as e:
+        Config(sources={"fixture": SourceSpec("fixture", "d")},
+               precedence={"default": ["fixture"]},
+               providers={"bad.name": ProviderSpec("bad.name", "views_local")})
+    assert "E-PROVIDER-NAME" in str(e.value)
+
+
 def test_yaml_parsed_and_period_bounds_applied(tmp_path):
     f = tmp_path / "trail.yaml"
     f.write_text(YAML_OK)

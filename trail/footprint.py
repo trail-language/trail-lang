@@ -177,3 +177,17 @@ def model_footprint(decl, dirty: dict, index: PanelIndex) -> set:
                 out |= cell_footprint(c.cond, dirty, index, locals, memo)
             out |= cell_footprint(s.default, dirty, index, locals, memo)
     return out
+
+
+def replace_rows(stored: pl.DataFrame, fresh: pl.DataFrame, keys: set) -> pl.DataFrame:
+    """Overwrite exactly the (entity, time) rows in `keys` with `fresh`'s values; keep every other
+    `stored` row. Only `keys` rows of `fresh` are used (non-footprint fresh rows are discarded); a
+    `keys` row absent from `fresh` (e.g. on_missing skip) is simply dropped, as a full recompute would."""
+    if not keys:
+        return stored
+    kf = pl.DataFrame(
+        {ENTITY_COL: [e for e, _ in keys], TIME_COL: [t for _, t in keys]}
+    ).with_columns(pl.col(TIME_COL).cast(stored.schema[TIME_COL]))
+    kept = stored.join(kf, on=[ENTITY_COL, TIME_COL], how="anti")
+    take = fresh.join(kf, on=[ENTITY_COL, TIME_COL], how="semi")
+    return pl.concat([kept, take.select(stored.columns)], how="vertical").sort([ENTITY_COL, TIME_COL])

@@ -102,3 +102,11 @@ class ViewManager:
                 self.store.write(decl.name, frame, mf)
                 built.append(decl.name)
         return built
+
+    def serve(self, decl, universes, entities=None):
+        """Return `decl`'s persisted frame, recomputing + repersisting first only if it is stale.
+        The lazy pull: a reference to a tracked view triggers recompute-on-change, then reads back."""
+        if self.is_stale(decl, universes):
+            frame, mf = self.build_frame(decl, universes, entities)
+            self.store.write(decl.name, frame, mf)
+        return self.store.read(decl.name)

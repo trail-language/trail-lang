@@ -98,7 +98,10 @@ def _register(server) -> None:
         source) or `path` (a .trail file, so `import` resolves). Result panel paginated + formatted.
         `streaming` runs the bounded-memory out-of-core engine (for panels larger than RAM).
         `entities` scopes the FETCH to those symbols - rescoring a handful of names costs a handful
-        of fetches rather than the whole configured universe."""
+        of fetches rather than the whole configured universe. A `track`ed model/signal persists its
+        result to the configured view store (a {config} data spec is required) and is served back
+        without recompute until its program or a dependency source's freshness token changes; use
+        `drop`/`refresh` to manage stored views."""
         return tools.run_tool(name, data, program=program, path=path, offset=offset, limit=limit,
                               format=format, to_file=to_file, no_stdlib=no_stdlib,
                               streaming=streaming, entities=entities)

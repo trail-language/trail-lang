@@ -82,3 +82,21 @@ def test_refresh_rebuilds(tmp_path):
 def test_view_tools_require_config():
     assert drop_tool("x", {"rows": []})["error"]["code"] == "E-ARGS"
     assert views_tool({"rows": []})["error"]["code"] == "E-ARGS"
+
+
+def test_lifecycle_persist_reuse_drop_recompute(tmp_path):
+    # day 1 — build + persist
+    cfg = _config(tmp_path, "t0")
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    assert [v["name"] for v in views_tool({"config": cfg})["views"]] == ["factor"]
+    built0 = _store(tmp_path).manifest("factor").built_at
+    # same day, same data — served from the store, no recompute
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    assert _store(tmp_path).manifest("factor").built_at == built0
+    # day 2 — new data (source freshness flips) — recompute on next reference
+    cfg = _config(tmp_path, "t1")  # same path/store dir; only the source token changed
+    run_tool("factor", {"config": cfg}, program=MODEL, format="records")
+    assert _store(tmp_path).manifest("factor").built_at != built0
+    # force a full recompute by deleting the stored frame
+    assert drop_tool("factor", {"config": cfg})["dropped"] is True
+    assert views_tool({"config": cfg})["views"] == []

@@ -158,6 +158,9 @@ class _T(Transformer):
         return ast.ScoreDecl(name, weight, tuple(cases), default)
 
     def model_decl(self, s):
+        track = bool(s) and isinstance(s[0], Token) and s[0].type == "TRACK"
+        if track:
+            s = s[1:]
         name = s[0].value
         idx = 1
         universe = None
@@ -176,9 +179,12 @@ class _T(Transformer):
                 on_missing = item[1]
             else:
                 stmts.append(item)
-        return ast.ModelDecl(name, universe, frequency, desc, on_missing, tuple(stmts))
+        return ast.ModelDecl(name, universe, frequency, desc, on_missing, tuple(stmts), track=track)
 
     def signal_decl(self, s):
+        track = bool(s) and isinstance(s[0], Token) and s[0].type == "TRACK"
+        if track:
+            s = s[1:]
         name = s[0].value
         idx = 1
         universe = None
@@ -189,7 +195,7 @@ class _T(Transformer):
         if idx < len(s) - 1 and isinstance(s[idx], Token) and s[idx].type == "FREQ":
             frequency = s[idx].value
             idx += 1
-        return ast.SignalDecl(name, universe, frequency, s[-1])
+        return ast.SignalDecl(name, universe, frequency, s[-1], track=track)
 
     def func_def(self, s):
         # s = [NAME(name), NAME(param)*, body_expr]; params are the NAME tokens

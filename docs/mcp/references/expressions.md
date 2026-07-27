@@ -31,8 +31,8 @@ field name denotes the whole grid. All arithmetic is **cell-aligned** on
 `and annual at backtest by cash costs daily def else equal export exposure
 fallback false for from gate hold_band hourly if import in learn median minute
 model monthly not on on_missing or pit_lag quarterly rebalance report score
-select signal skip strategy tbills to top true universe validate value weekly
-weight weighting weights where zero`. They ARE legal as trailing dotted-path
+select signal skip strategy tbills to top track true universe validate value
+weekly weight weighting weights where zero`. They ARE legal as trailing dotted-path
 components (`meta.value` is fine; `value = …` is not).
 
 ---
@@ -311,6 +311,23 @@ model quality at annual {
 # run over {"rows": A(gm=.45,roa=.05), B(gm=.25,roa=.075)} ->
 #   A: checklist=1, composite=1.0     B: checklist=1, composite=0.5882
 ```
+
+### `track` — persist a model/signal as a stored view
+Prefix a `model` or `signal` with `track` to persist its result frame to a **view store** and serve
+it back on later runs instead of recomputing:
+```trail
+track model scores at annual {
+    on_missing skip
+    export value = value_z() by meta.sector
+}
+```
+Running `scores` (with a `{config}` data spec) builds + stores the frame the first time, then serves
+the stored frame on subsequent runs — until the program or panel config changes, or a dependency
+source reports new data via its changefeed, in which case only the affected cells recompute (a
+reporter dirties its own time-series tail and its whole `by <group>` cross-section, nothing else).
+The served result is always identical to a full recompute. Manage stored views with the `drop`
+(force full recompute), `views` (list), and `refresh` (drop + rebuild) MCP tools; configure a store
+under `providers:` in `trail.yaml` (a local-disk store is auto-used otherwise). See `tools.md`.
 
 - **Assignments** `name = expr` bind a panel visible to *later* statements; forward
   refs are `E-NAME-UNDEFINED`, rebinding `E-NAME-REBOUND`.

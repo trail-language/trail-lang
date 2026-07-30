@@ -1,6 +1,7 @@
 # Trail MCP Tools — Detailed Contracts
 
-The six tools are pure importable functions in `trail.mcp.tools`
+The ten tools (`functions`, `schema`, `validate`, `describe`, `eval`, `run`, `fetch`,
+`drop`, `views`, `refresh`) are pure importable functions in `trail.mcp.tools`
 (`<name>_tool`) with identical signatures to the MCP tools, so you can verify any
 call offline. **Every tool returns structured JSON — a trail-level failure comes
 back as `{"error": {"code": "E-...", "message": "..."}}`, never an exception or a
@@ -77,6 +78,51 @@ Run a named `model`/`signal`. Pass **exactly one** of `program` (inline source) 
 run_tool("quality", {"rows":rows}, program=full_source, format="records")
 run_tool("composite", {"config":"trail.yaml"}, path="models/composite.trail")
 ```
+A `track`ed model/signal persists its result and serves it back incrementally — see
+**Tracked views** below.
+
+## `fetch(expressions, data, where=None, at=None, offset=None, limit=None, format="compact", to_file=None, entities=None) -> wide panel`
+Project SEVERAL expressions into one `(entity, time, <cols>)` frame — retrieval, not a single
+computed value. Each expression becomes a column (named by its text when unambiguous, else
+`f0..fn` with a `columns` map). `where`/`at`/`format` behave as in `eval`; `entities` scopes
+the *fetch* to those symbols (a `{config}` source then requests only them — pull a few names
+without paying for the whole universe; `where` filters after loading and does not reduce fetch cost).
+```python
+fetch_tool(["income.revenue", "meta.sector", "zscore(income.net_income) by meta.sector"],
+           {"config":"trail.yaml"}, entities=["AAPL","MSFT"], format="records")
+```
+
+---
+
+## Tracked views: persist + incremental recompute
+A `track model` / `track signal` declaration persists its result frame to a **view store** (a
+writeable provider; a local-disk store is auto-configured under `<config-dir>/.trail/views` when
+none is set). Running a tracked decl **serves the stored frame back** instead of recomputing —
+until the program or panel config changes, or a dependency source reports new data. When a source
+exposes a changefeed (e.g. FMP statement filing dates), only the affected cells recompute: a
+reporter dirties its own time-series tail and its whole `by <group>` cross-section, nothing else;
+the rest of the frame is reused unchanged. The result is identical to a full recompute — tracking is
+a transparent optimization. Persistence needs a `{config}` data spec (the store lives beside it).
+
+### `drop(name, data) -> {"dropped": bool}`
+Delete a stored view so its next run recomputes fully from the expression (a force-refresh).
+`dropped` is false if the view was absent. `data` is a `{config}` spec.
+
+### `views(data) -> {"views":[{name, kind, columns, built_at, sources}]}`
+List stored views with a manifest summary.
+
+### `refresh(name, data, program=None, path=None) -> {"refreshed", "shape"}`
+Drop then eagerly rebuild a tracked view. Pass the same `program`/`path` that declares it.
+```python
+run_tool("scores", {"config":"trail.yaml"}, path="models/scores.trail")   # build, then serve back
+views_tool({"config":"trail.yaml"})                                        # what is stored
+drop_tool("scores", {"config":"trail.yaml"})                               # force a full recompute next run
+```
+Configure a store explicitly (else the local-disk default is used) under `providers:` in `trail.yaml`:
+```yaml
+providers:
+  views: { driver: views_local, options: { dir: /var/trail/views } }
+```
 
 ---
 
@@ -91,7 +137,9 @@ Payload by format: `compact` → `{columns, data:{col:[...]}}`; `records` →
 `E-FUNC-UNKNOWN`, `E-FUNC-ARITY`, `E-NAME-UNDEFINED`, `E-NAME-REBOUND`,
 `E-UNIVERSE-UNKNOWN`, `E-MODEL-CONTEXT` (`weighted_score()` misuse), `E-IMPORT-*`,
 `E-DATA` (bad `data` spec / missing `entity`/`time`), `E-CONFIG` (config/credential),
-`E-ARGS` (`run` without exactly one of program/path). Warnings (`W-KIND-STOCK-FLOW`,
+`E-ARGS` (`run` without exactly one of program/path; a view tool without `{config}`),
+`E-VIEW-NAME` (invalid/traversing view name in `drop`/`refresh`), `E-PROVIDER-DRIVER` /
+`E-PROVIDER-OPTIONS` (view-store config). Warnings (`W-KIND-STOCK-FLOW`,
 `W-UPSAMPLE-FLOW`) never block.
 
 ## The universal loop

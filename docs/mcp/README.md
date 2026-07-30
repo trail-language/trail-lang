@@ -30,7 +30,7 @@ tiny inline panel, `eval` the expression, confirm there is no `error`/`issues`
 key and the value is sensible. If it errors, fix it against
 `references/expressions.md` + `references/functions.md` and re-run.
 
-## The MCP surface (six tools)
+## The MCP surface (ten tools)
 
 MCP tool names (from `trail.mcp.server`) — each is also a pure importable Python
 function `trail.mcp.tools.<name>_tool` with the same signature, so you can verify
@@ -38,7 +38,8 @@ offline:
 
 ```python
 from trail.mcp.tools import functions_tool, schema_tool, validate_tool, \
-                             describe_tool, eval_tool, run_tool
+                             describe_tool, eval_tool, run_tool, fetch_tool, \
+                             drop_tool, views_tool, refresh_tool
 ```
 
 | Tool | Signature (key args) | Returns | Use for |
@@ -49,6 +50,10 @@ from trail.mcp.tools import functions_tool, schema_tool, validate_tool, \
 | `describe` | `describe(data, field?)` | shape + fields-by-namespace + categorical distinct values | explore an unknown dataset; find the exact `meta.sector` strings a source emits |
 | `eval` | `eval(expression, data, where?, at?, offset?, limit?, format?, to_file?, no_stdlib?)` | `(entity, time, value)` panel | evaluate ONE expression over data |
 | `run` | `run(name, data, program? | path?, offset?, limit?, format?, to_file?, no_stdlib?)` | model/signal output panel | run a named model or signal from a full program |
+| `fetch` | `fetch(expressions, data, where?, at?, offset?, limit?, format?, to_file?, entities?)` | wide `(entity, time, <cols>)` panel | project several expressions into one frame (retrieval); `entities` scopes the fetch |
+| `drop` | `drop(name, data)` | `{dropped}` | delete a stored `track`ed view (force a full recompute next run) |
+| `views` | `views(data)` | `{views:[{name,kind,columns,built_at,sources}]}` | list stored tracked views |
+| `refresh` | `refresh(name, data, program? | path?)` | `{refreshed, shape}` | drop + eagerly rebuild a tracked view |
 
 `axis` filters `functions` to one of `elementwise | time-series | cross-sectional | model`.
 

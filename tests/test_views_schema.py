@@ -17,6 +17,11 @@ def test_non_views_unknown_field_still_rejected():
     assert schema.is_field("nope.unknown") is False
 
 
+def test_views_fields_have_level_kind():
+    assert schema.kind_of("views.rating.score100") == "level"   # not None/flow -> last-agg, upsample-safe
+    assert schema.kind_of("income.revenue") != "level"          # unaffected
+
+
 def test_bare_views_token_is_not_a_field():
     # only dotted `views.<name>` refs are valid; a bare `views` must not over-accept
     assert schema.is_field("views") is False

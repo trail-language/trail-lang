@@ -160,7 +160,7 @@ class ViewManager:
             freshness=self._source_tokens(),
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
-            group_hash=group_hash or {},
+            group_hash=group_hash or {}, frequency=decl.frequency,
         )
 
     def _compiled(self, decl, universes):

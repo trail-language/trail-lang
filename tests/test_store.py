@@ -44,6 +44,14 @@ def test_manifest_roundtrip():
     assert Manifest.from_dict(mf.to_dict()) == mf
 
 
+def test_manifest_frequency_roundtrips_and_defaults():
+    mf = Manifest("v", "signal", ("v",), "h", ("fixture",), {"fixture": None},
+                  "2026-08-04T00:00:00", ("views.v",), frequency="annual")
+    assert Manifest.from_dict(mf.to_dict()).frequency == "annual"
+    d = mf.to_dict(); d.pop("frequency")          # an old manifest with no frequency key
+    assert Manifest.from_dict(d).frequency is None
+
+
 def test_store_rejects_traversing_names(tmp_path):
     import pytest
     s = LocalDiskViewStore({"dir": str(tmp_path)})

@@ -286,6 +286,9 @@ class ViewManager:
         return self._recompute_merge(decl, universes, mf, dirty)
 
 
+_FREQ_ORDER = ("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute")  # coarse -> fine
+
+
 class ViewSource(DataSource):
     """Read-only source surfacing stored tracked-view frames as `<namespace>.*` fields, so views compose
     with other sources (`views.rating.score × fmp.pe`). Naive: a view's `time` is already the PIT decision
@@ -306,16 +309,21 @@ class ViewSource(DataSource):
                 yield n, mf
 
     def available_fields(self, frequency: str | None = None) -> set[str]:
+        # The store serves EVERY stored column regardless of the requested grid - per-view frequency is
+        # not a routing gate. A bare `views.x` reference resolves the source's default frequency (which
+        # needn't match a given view), so gating on exact frequency would make any non-default-frequency
+        # or `at`-less view unservable-yet-discoverable. Alignment places each view's frame by its own
+        # `time` values (naive), so same-frequency joins are correct; cross-frequency is out of v1 scope.
         out: set[str] = set()
         for _, mf in self._views():
-            if frequency is None or mf.frequency == frequency:  # a view is offered at its own frequency
-                out.update(mf.columns)
+            out.update(mf.columns)
         return out
 
     def capabilities(self) -> Capabilities:
-        freqs = sorted({mf.frequency for _, mf in self._views() if mf.frequency})
-        return Capabilities(frequency=(freqs[0] if freqs else "annual"),
-                            frequencies=tuple(freqs), provenance="tracked view store")
+        freqs = {mf.frequency for _, mf in self._views() if mf.frequency}
+        ordered = tuple(f for f in _FREQ_ORDER if f in freqs)   # canonical (coarse->fine), not lexicographic
+        return Capabilities(frequency=(ordered[0] if ordered else "annual"),
+                            frequencies=ordered, provenance="tracked view store")
 
     def load(self, request: LoadRequest) -> pl.DataFrame:
         want = set(request.fields)

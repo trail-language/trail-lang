@@ -50,6 +50,15 @@ def test_panel_key_unchanged_by_views_reference(tmp_path):
     assert store.manifest("rating").panel_key == pk1                                          # no churn
 
 
+def test_view_declared_without_at_is_queryable(tmp_path):
+    # a tracked model with no `at` stores frequency=None; a bare reference must still route (the reviewer's
+    # HIGH case: discovery advertised it but routing failed E-FIELD-UNSERVED)
+    cfg = _cfg(tmp_path)
+    run_tool("r2", {"config": cfg}, program="track model r2 { export s = income.revenue }", format="records")
+    r = fetch_tool(["views.r2.s"], {"config": cfg}, format="records")
+    assert "error" not in r and r["records"]
+
+
 def test_screen_over_views_field(tmp_path):
     cfg = _cfg(tmp_path)
     run_tool("rating", {"config": cfg}, program=TRACK, format="records")

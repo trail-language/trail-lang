@@ -16,13 +16,29 @@ def _seed(tmp_path):
     return s, t
 
 
-def test_available_fields_and_capabilities(tmp_path):
+def test_available_fields_serves_every_view_regardless_of_frequency(tmp_path):
     _seed(tmp_path)
     vs = ViewSource({"dir": str(tmp_path)})
+    # a stored column is offered for ANY requested frequency (frequency is not a routing gate)
     assert vs.available_fields() == {"views.rating.score"}
     assert vs.available_fields("annual") == {"views.rating.score"}
-    assert vs.available_fields("quarterly") == set()        # a view is offered only at its own frequency
+    assert vs.available_fields("quarterly") == {"views.rating.score"}
     assert vs.capabilities().frequency == "annual"
+
+
+def test_mixed_and_none_frequency_views_all_reachable(tmp_path):
+    s, t = _seed(tmp_path)                                   # rating @ annual
+    df = pl.DataFrame({"entity": ["A"], "time": [t], "views.qmom.sig": [3.0]})
+    s.write("qmom", df, Manifest("qmom", "signal", ("qmom",), "h2", ("fixture",), {"fixture": None},
+                                 "2026-08-04T00:00:00", ("views.qmom.sig",), frequency="quarterly"))
+    df2 = pl.DataFrame({"entity": ["A"], "time": [t], "views.nof.v": [4.0]})
+    s.write("nof", df2, Manifest("nof", "model", ("v",), "h3", ("fixture",), {"fixture": None},
+                                 "2026-08-04T00:00:00", ("views.nof.v",), frequency=None))  # declared without `at`
+    vs = ViewSource({"dir": str(tmp_path)})
+    # every column is available at the default frequency a bare reference resolves to
+    got = vs.available_fields(vs.capabilities().frequency)
+    assert got == {"views.rating.score", "views.qmom.sig", "views.nof.v"}
+    assert set(vs.capabilities().frequencies) == {"annual", "quarterly"}   # canonical, None dropped
 
 
 def test_load_selects_and_scopes(tmp_path):

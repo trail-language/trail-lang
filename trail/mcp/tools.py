@@ -52,14 +52,17 @@ def _validate_or_error(program):
     return None
 
 
-def _serve_view(decl, universes, config_path, entities):
-    """Materialize (if stale) and read back a tracked view's persisted frame."""
+def _serve_view(decl, universes, config_path, entities, prog=None):
+    """Materialize (if stale) and read back a tracked view's persisted frame. `prog` supplies the
+    other tracked decls so a view-of-view can build its same-program dependencies (view-of-view)."""
     from trail.config import load_config
     from trail.providers import store_for_config
     from trail.views import ViewManager
     cfg = load_config(config_path)
     store = store_for_config(cfg, config_path)
-    return ViewManager(store, cfg, config_path).serve(decl, universes, entities=entities)
+    mgr = ViewManager(store, cfg, config_path)
+    decls = {d.name: d for d in mgr.tracked(prog)} if prog is not None else None
+    return mgr.serve(decl, universes, decls=decls, entities=entities)
 
 
 def describe_tool(data: dict, field: str | None = None) -> dict:
@@ -144,7 +147,7 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
     # beside it); without one, fall through and compute normally.
     if getattr(decl, "track", False) and "config" in data:
         try:
-            result = _serve_view(decl, universes, data["config"], entities)
+            result = _serve_view(decl, universes, data["config"], entities, prog)
         except Exception as e:
             return to_error(e)
         return format_result(result, offset=offset, limit=limit, fmt=format, to_file=to_file)

@@ -319,17 +319,30 @@ class ViewManager:
         self.store.write(decl.name, merged, self._manifest(decl, universes, kind, exports, cols, cur_gh))
         return merged
 
-    def serve(self, decl, universes, entities=None):
+    def serve(self, decl, universes, decls=None, entities=None, _visiting=()):
         """Return `decl`'s persisted frame. An entity-scoped request computes + returns WITHOUT
-        persisting (a scoped rescore must never overwrite the full stored view). Otherwise: rebuild
-        fully on a recipe change; else consult the source changefeed — recompute only the dirty
-        footprint when one exists, else a full rebuild. Serve stored unchanged when nothing changed."""
+        persisting (a scoped rescore must never overwrite the full stored view). Otherwise: materialize
+        any referenced tracked views first (view-of-view — same-program deps in `decls` are built
+        recursively, in topological order; cross-run deps are used from the store), rejecting reference
+        cycles; then rebuild fully on a recipe change OR a changed view-dep; else consult the source
+        changefeed — recompute only the dirty footprint when one exists, else a full rebuild. Serve
+        stored unchanged when nothing changed."""
         if entities is not None:                    # scoped rescore: compute + return, never persist
             frame, _ = self.build_frame(decl, universes, entities)
             return frame
+        if decl.name in _visiting:                  # recursion guard (belt-and-suspenders vs the closure)
+            raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
+        deps = self._view_deps(decl, universes)
+        if self._in_dep_closure(decl.name, deps, universes, decls):
+            raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
+        for dep in sorted(deps):                    # materialize same-program deps before building
+            dd = (decls or {}).get(dep)
+            if dd is not None:
+                self.serve(dd, universes, decls=decls, _visiting=_visiting + (decl.name,))
         mf = self.store.manifest(decl.name)
         if (mf is None or mf.expr_hash != expr_hash(decl, universes)
-                or mf.panel_key != _panel_key(self.config)):
+                or mf.panel_key != _panel_key(self.config)
+                or self._view_deps_stale(mf)):      # a referenced view was rebuilt -> full rebuild (coarse)
             return self._full_build(decl, universes, None)
         dirty = self._detect_dirty(mf)
         if dirty is None:                           # nothing changed -> serve stored (rebuild if gone)

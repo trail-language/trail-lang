@@ -7,6 +7,7 @@ block roots the store so P3's ViewSource injection resolves `views.*` during a d
 import datetime as dt
 
 import polars as pl
+import pytest
 
 from trail import ast
 from trail.config import load_config
@@ -106,3 +107,39 @@ def test_build_records_view_dep_fingerprints_and_invalidates(tmp_path):
     # the dep is rebuilt (new built_at) -> the dependent is coarsely invalidated
     _seed_rating(mgr.store, tok="hr", built="2026-08-05T09:00:00")
     assert mgr.is_stale(comp, {}) is True
+
+
+# --- T4: serve materializes deps topologically; rejects cycles ------------------------------------
+
+def _tracked_map(mgr, prog):
+    return {d.name: d for d in mgr.tracked(prog)}
+
+
+def test_serve_materializes_same_program_dep_first(tmp_path):
+    mgr = _mgr(tmp_path)
+    prog = prepare("track signal a at annual = income.revenue\n"
+                   "track signal b at annual = views.a * 2.0", stdlib=False)
+    decls = _tracked_map(mgr, prog)
+    mgr.serve(decls["b"], {}, decls=decls)                    # serving b must build a first
+    assert mgr.store.read("a") is not None                   # the dep was materialized
+    b = mgr.store.read("b")
+    assert b is not None and "views.b" in b.columns
+    merged = mgr.store.read("a").join(b, on=["entity", "time"])
+    assert (merged["views.b"] == merged["views.a"] * 2.0).all()   # b computed over the fresh dep
+
+
+def test_serve_rejects_self_reference(tmp_path):
+    mgr = _mgr(tmp_path)
+    prog = prepare("track signal s at annual = views.s", stdlib=False)
+    decls = _tracked_map(mgr, prog)
+    with pytest.raises(ValueError, match="E-VIEW-CYCLE"):
+        mgr.serve(decls["s"], {}, decls=decls)
+
+
+def test_serve_rejects_mutual_cycle(tmp_path):
+    mgr = _mgr(tmp_path)
+    prog = prepare("track signal a at annual = views.b\n"
+                   "track signal b at annual = views.a", stdlib=False)
+    decls = _tracked_map(mgr, prog)
+    with pytest.raises(ValueError, match="E-VIEW-CYCLE"):
+        mgr.serve(decls["b"], {}, decls=decls)

@@ -35,3 +35,24 @@ def test_unstored_view_field_stays_unserved(tmp_path):
     run_tool("rating", {"config": cfg}, program=TRACK, format="records")
     r = fetch_tool(["views.nope.x"], {"config": cfg}, format="records")
     assert "error" in r
+
+
+def test_panel_key_unchanged_by_views_reference(tmp_path):
+    # the synthetic views source must never reach ViewManager's config: a tracked view's stored
+    # panel_key stays identical whether or not another query references views.*
+    from trail.store import LocalDiskViewStore
+    cfg = _cfg(tmp_path)
+    run_tool("rating", {"config": cfg}, program=TRACK, format="records")
+    store = LocalDiskViewStore({"dir": str(tmp_path / ".trail" / "views")})
+    pk1 = store.manifest("rating").panel_key
+    fetch_tool(["views.rating.score", "income.revenue"], {"config": cfg}, format="records")  # injects views src
+    run_tool("rating", {"config": cfg}, program=TRACK, format="records")                     # re-serve
+    assert store.manifest("rating").panel_key == pk1                                          # no churn
+
+
+def test_screen_over_views_field(tmp_path):
+    cfg = _cfg(tmp_path)
+    run_tool("rating", {"config": cfg}, program=TRACK, format="records")
+    r = fetch_tool(["views.rating.score"], {"config": cfg},
+                   where="views.rating.score > 0", format="records")
+    assert "error" not in r

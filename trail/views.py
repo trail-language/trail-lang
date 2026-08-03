@@ -16,8 +16,11 @@ import polars as pl
 
 from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
+from trail.deps import extract
+from trail.fieldname import canonical
 from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
+from trail.schema import VIEW_NAMESPACE
 from trail.source import ENTITY_COL, TIME_COL, Capabilities, DataSource, LoadRequest
 from trail.store import LocalDiskViewStore, Manifest, ViewStore, view_columns
 
@@ -147,11 +150,61 @@ class ViewManager:
                         pass
         return toks
 
+    # --- view-of-view: dependencies on other tracked views (P3 injection does the compute) ----------
+    def _view_deps(self, decl, universes) -> set[str]:
+        """Names of the tracked views `decl` references, from its `views.*` fields. `views.rating.score`
+        and the signal-view `views.momentum` both yield the segment after `views` (the view name)."""
+        bound = _bound_universe(decl, universes)
+        scoped = ast.Program(tuple(universe_chain(bound, universes)) + (decl,))
+        out: set[str] = set()
+        for f in extract(scoped).fields:
+            parts = canonical(f).split(".")             # strips any freq prefix / pin qualifier
+            if len(parts) >= 2 and parts[0] == VIEW_NAMESPACE:
+                out.add(parts[1])
+        return out
+
+    def _view_dep_fingerprints(self, deps) -> dict[str, str]:
+        """Per-dep fingerprint (`expr_hash:built_at` of its stored manifest, `""` when not built). A
+        change in any recorded fingerprint is what makes a dependent stale (coarse invalidation)."""
+        out: dict[str, str] = {}
+        for name in deps:
+            mf = self.store.manifest(name)
+            out[name] = f"{mf.expr_hash}:{mf.built_at}" if mf is not None else ""
+        return out
+
+    def _view_deps_stale(self, mf) -> bool:
+        """True when any view-dep recorded in `mf` has a different current fingerprint (rebuilt/vanished)."""
+        return self._view_dep_fingerprints(set(mf.view_deps)) != mf.view_deps
+
+    def _in_dep_closure(self, target, deps, universes, decls) -> bool:
+        """Whether `target` is reachable through the view-dep graph starting from `deps` — a same-program
+        dep expands via its decl, a cross-run dep via its stored manifest's `view_deps`. `target` already
+        appearing in `deps` is a direct self-reference. Used to reject cycles before materializing."""
+        seen: set[str] = set()
+        stack = list(deps)
+        while stack:
+            d = stack.pop()
+            if d == target:
+                return True
+            if d in seen:
+                continue
+            seen.add(d)
+            dd = (decls or {}).get(d)
+            if dd is not None:
+                stack.extend(self._view_deps(dd, universes))
+            else:
+                mf = self.store.manifest(d)
+                if mf is not None:
+                    stack.extend(mf.view_deps.keys())
+        return False
+
     def is_stale(self, decl, universes) -> bool:
         mf = self.store.manifest(decl.name)
         if mf is None or mf.expr_hash != expr_hash(decl, universes):
             return True
         if mf.panel_key != _panel_key(self.config):   # period window / pit / strict changed
+            return True
+        if self._view_deps_stale(mf):                 # a referenced view was rebuilt -> rebuild (coarse)
             return True
         return self._source_tokens() != mf.freshness
 
@@ -164,6 +217,7 @@ class ViewManager:
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
             group_hash=group_hash or {}, frequency=decl.frequency,
+            view_deps=self._view_dep_fingerprints(self._view_deps(decl, universes)),
         )
 
     def _compiled(self, decl, universes):
@@ -192,7 +246,11 @@ class ViewManager:
         """Build every stale tracked view in `program`, writing each to the store. Returns the names
         that were (re)computed; an empty list means all tracked views were served from the store.
         `entities` is intentionally ignored for the persisted artifact: a tracked view is always the
-        full universe, so a scoped request can never overwrite it with a subset."""
+        full universe, so a scoped request can never overwrite it with a subset.
+
+        Eager pre-build helper (declaration order); NOT view-of-view-aware — it neither orders by
+        view-deps nor rejects cycles. The live request path is `serve`, which does both; a program
+        mixing view-of-view deps should be driven through `serve` (as run_tool does), not here."""
         built = []
         for decl in self.tracked(program):
             if self.is_stale(decl, universes):
@@ -265,17 +323,32 @@ class ViewManager:
         self.store.write(decl.name, merged, self._manifest(decl, universes, kind, exports, cols, cur_gh))
         return merged
 
-    def serve(self, decl, universes, entities=None):
-        """Return `decl`'s persisted frame. An entity-scoped request computes + returns WITHOUT
-        persisting (a scoped rescore must never overwrite the full stored view). Otherwise: rebuild
-        fully on a recipe change; else consult the source changefeed — recompute only the dirty
-        footprint when one exists, else a full rebuild. Serve stored unchanged when nothing changed."""
+    def serve(self, decl, universes, decls=None, entities=None, _visiting=()):
+        """Return `decl`'s frame. First materialize any referenced tracked views (view-of-view —
+        same-program deps in `decls` are built recursively in topological order as full persisted views;
+        cross-run deps are used from the store), rejecting reference cycles (E-VIEW-CYCLE). An
+        entity-scoped request then computes + returns WITHOUT persisting the dependent (a scoped rescore
+        must never overwrite the full stored view). Otherwise rebuild fully on a recipe change OR a
+        changed view-dep; else consult the source changefeed — recompute only the dirty footprint when
+        one exists, else a full rebuild; serve stored unchanged when nothing changed."""
+        if decl.name in _visiting:                  # recursion guard (belt-and-suspenders vs the closure)
+            raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
+        deps = self._view_deps(decl, universes)
+        if self._in_dep_closure(decl.name, deps, universes, decls):
+            raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
+        # Materialize same-program deps first (always as FULL persisted views, even for a scoped
+        # request) so the build below reads real dep values, never silent nulls from an absent dep.
+        for dep in sorted(deps):
+            dd = (decls or {}).get(dep)
+            if dd is not None:
+                self.serve(dd, universes, decls=decls, _visiting=_visiting + (decl.name,))
         if entities is not None:                    # scoped rescore: compute + return, never persist
             frame, _ = self.build_frame(decl, universes, entities)
             return frame
         mf = self.store.manifest(decl.name)
         if (mf is None or mf.expr_hash != expr_hash(decl, universes)
-                or mf.panel_key != _panel_key(self.config)):
+                or mf.panel_key != _panel_key(self.config)
+                or self._view_deps_stale(mf)):      # a referenced view was rebuilt -> full rebuild (coarse)
             return self._full_build(decl, universes, None)
         dirty = self._detect_dirty(mf)
         if dirty is None:                           # nothing changed -> serve stored (rebuild if gone)

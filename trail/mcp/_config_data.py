@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import os
 import warnings
+from dataclasses import replace
 
 import polars as pl
 
 from trail import ast
 from trail.compiler import universe_chain
-from trail.config import load_config
+from trail.config import SourceSpec, load_config
 from trail.deps import extract
 from trail.registry import resolve_driver
+from trail.schema import VIEW_NAMESPACE
 from trail.source import ENTITY_COL
 from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for
 
@@ -51,6 +53,22 @@ def _load(config, fields: frozenset[str], freq, align_overrides,
     return panel.with_columns(pl.col(ENTITY_COL).set_sorted()), warns
 
 
+def _references_views(fields) -> bool:
+    return any(f.split(".", 1)[0] == VIEW_NAMESPACE for f in fields)
+
+
+def _with_view_source(config, config_path):
+    """A copy of `config` with a synthetic `views` source (the tracked-view store, read-only) added +
+    a `precedence.views` chain, so `views.*` fields route to it. Kept local to the load - never handed
+    to ViewManager - so it can't perturb a tracked view's panel_key or make a view reference itself."""
+    from trail.providers import store_for_config  # lazy: avoids importing the store at module load
+    store = store_for_config(config, config_path)
+    ns = store.namespace
+    src = SourceSpec(ns, "trail.views.ViewSource", {"dir": str(store.dir), "namespace": ns})
+    return replace(config, sources={**config.sources, ns: src},
+                   precedence={**config.precedence, ns: [ns]})
+
+
 def resolve_config_panel(config_path, decl, universes,
                          entities=None, fresh=False) -> tuple[pl.DataFrame, list[str]]:
     config = load_config(config_path)
@@ -67,6 +85,16 @@ def resolve_config_panel(config_path, decl, universes,
         scoped = ast.Program(tuple(universe_chain(bound, universes)) + (decl,))
         dep = extract(scoped)
         fields, freq, aligns = frozenset(dep.fields), decl.frequency, dep.align_overrides
+    # Make stored views queryable: when a load references `views.*` (or on discovery), inject the
+    # read-only view source so those fields resolve. Guarded - no reachable/writable store just leaves
+    # `views.*` unserved (pre-P3 behaviour), never breaks a plain source load.
+    if decl is None or _references_views(fields):
+        try:
+            config = _with_view_source(config, config_path)
+            if decl is None:
+                fields = frozenset(_all_fields(config))
+        except Exception:
+            pass
     # `entities` MUST be part of the key: an entity-scoped load produces a narrower panel, and
     # serving it to a later unscoped request would silently answer from a subset of the universe.
     scope = tuple(sorted(entities)) if entities else None

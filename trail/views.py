@@ -16,8 +16,11 @@ import polars as pl
 
 from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
+from trail.deps import extract
+from trail.fieldname import canonical
 from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
+from trail.schema import VIEW_NAMESPACE
 from trail.source import ENTITY_COL, TIME_COL, Capabilities, DataSource, LoadRequest
 from trail.store import LocalDiskViewStore, Manifest, ViewStore, view_columns
 
@@ -147,11 +150,61 @@ class ViewManager:
                         pass
         return toks
 
+    # --- view-of-view: dependencies on other tracked views (P3 injection does the compute) ----------
+    def _view_deps(self, decl, universes) -> set[str]:
+        """Names of the tracked views `decl` references, from its `views.*` fields. `views.rating.score`
+        and the signal-view `views.momentum` both yield the segment after `views` (the view name)."""
+        bound = _bound_universe(decl, universes)
+        scoped = ast.Program(tuple(universe_chain(bound, universes)) + (decl,))
+        out: set[str] = set()
+        for f in extract(scoped).fields:
+            parts = canonical(f).split(".")             # strips any freq prefix / pin qualifier
+            if len(parts) >= 2 and parts[0] == VIEW_NAMESPACE:
+                out.add(parts[1])
+        return out
+
+    def _view_dep_fingerprints(self, deps) -> dict[str, str]:
+        """Per-dep fingerprint (`expr_hash:built_at` of its stored manifest, `""` when not built). A
+        change in any recorded fingerprint is what makes a dependent stale (coarse invalidation)."""
+        out: dict[str, str] = {}
+        for name in deps:
+            mf = self.store.manifest(name)
+            out[name] = f"{mf.expr_hash}:{mf.built_at}" if mf is not None else ""
+        return out
+
+    def _view_deps_stale(self, mf) -> bool:
+        """True when any view-dep recorded in `mf` has a different current fingerprint (rebuilt/vanished)."""
+        return self._view_dep_fingerprints(set(mf.view_deps)) != mf.view_deps
+
+    def _in_dep_closure(self, target, deps, universes, decls) -> bool:
+        """Whether `target` is reachable through the view-dep graph starting from `deps` — a same-program
+        dep expands via its decl, a cross-run dep via its stored manifest's `view_deps`. `target` already
+        appearing in `deps` is a direct self-reference. Used to reject cycles before materializing."""
+        seen: set[str] = set()
+        stack = list(deps)
+        while stack:
+            d = stack.pop()
+            if d == target:
+                return True
+            if d in seen:
+                continue
+            seen.add(d)
+            dd = (decls or {}).get(d)
+            if dd is not None:
+                stack.extend(self._view_deps(dd, universes))
+            else:
+                mf = self.store.manifest(d)
+                if mf is not None:
+                    stack.extend(mf.view_deps.keys())
+        return False
+
     def is_stale(self, decl, universes) -> bool:
         mf = self.store.manifest(decl.name)
         if mf is None or mf.expr_hash != expr_hash(decl, universes):
             return True
         if mf.panel_key != _panel_key(self.config):   # period window / pit / strict changed
+            return True
+        if self._view_deps_stale(mf):                 # a referenced view was rebuilt -> rebuild (coarse)
             return True
         return self._source_tokens() != mf.freshness
 

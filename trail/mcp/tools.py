@@ -143,8 +143,9 @@ def run_tool(name: str, data: dict, program: str | None = None, path: str | None
     else:
         return {"error": {"code": "E-NAME-UNKNOWN", "message": f"no model or signal named '{name}'"}}
     # A `track`ed decl is served from the view store (built on first use, recomputed when stale),
-    # so a re-run skips the fetch+compute entirely. Requires a {config} data spec (the store lives
-    # beside it); without one, fall through and compute normally.
+    # so a re-run skips the fetch+compute entirely. A view-of-view (its expr references `views.*`) has
+    # its dependency views materialized first, in dependency order; reference cycles raise E-VIEW-CYCLE.
+    # Requires a {config} data spec (the store lives beside it); without one, compute normally.
     if getattr(decl, "track", False) and "config" in data:
         try:
             result = _serve_view(decl, universes, data["config"], entities, prog)

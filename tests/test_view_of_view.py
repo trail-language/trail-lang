@@ -143,3 +143,63 @@ def test_serve_rejects_mutual_cycle(tmp_path):
     decls = _tracked_map(mgr, prog)
     with pytest.raises(ValueError, match="E-VIEW-CYCLE"):
         mgr.serve(decls["b"], {}, decls=decls)
+
+
+# --- T5: end-to-end acceptance through run_tool ---------------------------------------------------
+
+def _config_only(tmp_path):
+    """Write the config (rooting the store) and return the run_tool `data` spec + the store dir."""
+    store_dir = tmp_path / "views"
+    _write_config(tmp_path / "trail.yaml", store_dir)
+    return {"config": str(tmp_path / "trail.yaml")}, store_dir
+
+
+def test_run_same_program_view_of_view(tmp_path):
+    from trail.mcp.tools import run_tool
+    data, store_dir = _config_only(tmp_path)
+    prog = ("track signal a at annual = income.revenue\n"
+            "track signal b at annual = views.a * 2.0")
+    r = run_tool("b", data, program=prog, no_stdlib=True)
+    assert "error" not in r, r
+    store = LocalDiskViewStore({"dir": str(store_dir)})
+    assert store.read("a") is not None                       # dependency was materialized on the way
+    merged = store.read("a").join(store.read("b"), on=["entity", "time"])
+    assert (merged["views.b"] == merged["views.a"] * 2.0).all()
+
+
+def test_run_coarse_invalidation_propagates(tmp_path):
+    from trail.mcp.tools import run_tool
+    data, store_dir = _config_only(tmp_path)
+    base = run_tool("b", data, program=("track signal a at annual = income.revenue\n"
+                                        "track signal b at annual = views.a * 2.0"), no_stdlib=True)
+    assert "error" not in base, base
+    store = LocalDiskViewStore({"dir": str(store_dir)})
+    first = store.read("b").sort("entity", "time")["views.b"].to_list()
+    # the dependency's recipe changes -> a rebuilds -> b is coarsely invalidated and picks up new values
+    r = run_tool("b", data, program=("track signal a at annual = income.revenue * 10.0\n"
+                                     "track signal b at annual = views.a * 2.0"), no_stdlib=True)
+    assert "error" not in r, r
+    second = LocalDiskViewStore({"dir": str(store_dir)}).read("b").sort("entity", "time")["views.b"].to_list()
+    assert second == pytest.approx([v * 10.0 for v in first])
+
+
+def test_run_cross_run_layered(tmp_path):
+    from trail.mcp.tools import run_tool
+    data, store_dir = _config_only(tmp_path)
+    # build `a` in one run, then reference it from a program that declares only `b`
+    assert "error" not in run_tool("a", data, program="track signal a at annual = income.revenue",
+                                   no_stdlib=True)
+    r = run_tool("b", data, program="track signal b at annual = views.a * 3.0", no_stdlib=True)
+    assert "error" not in r, r
+    store = LocalDiskViewStore({"dir": str(store_dir)})
+    merged = store.read("a").join(store.read("b"), on=["entity", "time"])
+    assert (merged["views.b"] == merged["views.a"] * 3.0).all()
+    assert set(store.manifest("b").view_deps) == {"a"}       # the cross-run dep is recorded
+
+
+def test_run_cycle_returns_structured_error(tmp_path):
+    from trail.mcp.tools import run_tool
+    data, _ = _config_only(tmp_path)
+    r = run_tool("b", data, program=("track signal a at annual = views.b\n"
+                                     "track signal b at annual = views.a"), no_stdlib=True)
+    assert r.get("error", {}).get("code") == "E-VIEW-CYCLE"

@@ -73,5 +73,7 @@ def is_field(column: str) -> bool:
 
 
 def kind_of(column: str) -> str | None:
+    if column.startswith(VIEW_NAMESPACE + "."):
+        return "level"   # scores/grades/percentiles are levels: aligned by `last`, upsample-safe
     spec = _CORE.get(column) or _plugin_fields().get(column)
     return spec.kind if spec else None

@@ -114,7 +114,9 @@ def _register(server) -> None:
         """Fetch a WIDE frame: project several trail EXPRESSIONS into one [entity, time, <cols>] panel
         (retrieval, not a single computed value like `eval`). Each expression becomes a column. `where`
         filters the universe, `at` sets frequency; `data`/`format`/`streaming`/`entities` behave as in
-        `eval` - `entities` scoping the fetch, `where` filtering what was already loaded."""
+        `eval` - `entities` scoping the fetch, `where` filtering what was already loaded. Stored tracked
+        views are queryable here: a `views.<name>.<col>` expression joins the persisted view against
+        `fmp.*`/other sources like any field (needs a `{config}` data spec)."""
         return tools.fetch_tool(expressions, data, where=where, at=at, offset=offset, limit=limit,
                                 format=format, to_file=to_file, no_stdlib=no_stdlib,
                                 streaming=streaming, entities=entities)

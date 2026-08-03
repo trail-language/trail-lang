@@ -9,14 +9,17 @@ entities' cells); without one, it falls back to a whole-view rebuild. See docs/t
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
+
+import polars as pl
 
 from trail import ast
 from trail.compiler import compile_model, compile_signal, universe_chain
 from trail.footprint import build_index, model_footprint, replace_rows
 from trail.registry import resolve_driver
-from trail.source import ENTITY_COL, TIME_COL
-from trail.store import Manifest, ViewStore, view_columns
+from trail.source import ENTITY_COL, TIME_COL, Capabilities, DataSource, LoadRequest
+from trail.store import LocalDiskViewStore, Manifest, ViewStore, view_columns
 
 
 def _group_signature(panel, by_cols) -> dict:
@@ -160,7 +163,7 @@ class ViewManager:
             freshness=self._source_tokens(),
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
-            group_hash=group_hash or {},
+            group_hash=group_hash or {}, frequency=decl.frequency,
         )
 
     def _compiled(self, decl, universes):
@@ -281,3 +284,63 @@ class ViewManager:
         if dirty == "COARSE":                       # a changefeed-less source moved -> full rebuild
             return self._full_build(decl, universes, None)
         return self._recompute_merge(decl, universes, mf, dirty)
+
+
+_FREQ_ORDER = ("annual", "quarterly", "monthly", "weekly", "daily", "hourly", "minute")  # coarse -> fine
+
+
+class ViewSource(DataSource):
+    """Read-only source surfacing stored tracked-view frames as `<namespace>.*` fields, so views compose
+    with other sources (`views.rating.score × fmp.pe`). Naive: a view's `time` is already the PIT decision
+    grid, so it emits no `__date:*` coordinate and does not override `describe_field`. Auto-injected into
+    the `{config}` load path by resolve_config_panel when a load references `views.*`."""
+
+    name = "views"
+
+    def __init__(self, options=None) -> None:
+        super().__init__(options)
+        self.store = LocalDiskViewStore(self.options)   # requires options['dir']; namespace default "views"
+        self.name = self.store.namespace
+
+    def _views(self):
+        for n in self.store.list():
+            mf = self.store.manifest(n)
+            if mf is not None:
+                yield n, mf
+
+    def available_fields(self, frequency: str | None = None) -> set[str]:
+        # The store serves EVERY stored column regardless of the requested grid - per-view frequency is
+        # not a routing gate. A bare `views.x` reference resolves the source's default frequency (which
+        # needn't match a given view), so gating on exact frequency would make any non-default-frequency
+        # or `at`-less view unservable-yet-discoverable. Alignment places each view's frame by its own
+        # `time` values (naive), so same-frequency joins are correct; cross-frequency is out of v1 scope.
+        out: set[str] = set()
+        for _, mf in self._views():
+            out.update(mf.columns)
+        return out
+
+    def capabilities(self) -> Capabilities:
+        freqs = {mf.frequency for _, mf in self._views() if mf.frequency}
+        ordered = tuple(f for f in _FREQ_ORDER if f in freqs)   # canonical (coarse->fine), not lexicographic
+        return Capabilities(frequency=(ordered[0] if ordered else "annual"),
+                            frequencies=ordered, provenance="tracked view store")
+
+    def load(self, request: LoadRequest) -> pl.DataFrame:
+        want = set(request.fields)
+        frames = []
+        for name, mf in self._views():
+            cols = [c for c in mf.columns if c in want]
+            if not cols:
+                continue
+            df = self.store.read(name).select([ENTITY_COL, TIME_COL, *cols])
+            if request.entities:
+                df = df.filter(pl.col(ENTITY_COL).is_in(list(request.entities)))
+            frames.append(df)
+        if not frames:
+            return pl.DataFrame({ENTITY_COL: [], TIME_COL: []})
+        return functools.reduce(
+            lambda a, b: a.join(b, on=[ENTITY_COL, TIME_COL], how="full", coalesce=True), frames)
+
+    def freshness_token(self) -> str | None:
+        parts = sorted((n, mf.expr_hash, mf.built_at) for n, mf in self._views())
+        return hashlib.sha256(repr(parts).encode()).hexdigest()[:16] if parts else None

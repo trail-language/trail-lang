@@ -18,7 +18,7 @@ from trail.align import (
 )
 from trail.config import Config, ConfigError
 from trail.registry import resolve_driver
-from trail.schema import active_schema, kind_of
+from trail.schema import VIEW_NAMESPACE, active_schema, kind_of
 from trail.source import (
     BROADCAST_ENTITY, TIME_COL, ENTITY_COL, DataSource, LoadRequest, date_col, is_date_col,
 )
@@ -125,9 +125,14 @@ def conform_panel(
     missing_fields = sorted(f for f in fields if f not in provided)
     if missing_fields:
         issues.append(f"missing requested field column(s) {missing_fields}")
-    # `__date:*` alignment coordinates are reserved (not schema fields); they pass through.
+    # `__date:*` alignment coordinates are reserved (not schema fields); they pass through, as do
+    # stored-view columns (`views.*`), which a ViewSource serves without a static schema entry.
     allowed = {ENTITY_COL, TIME_COL} | set(active_schema())
-    extra = sorted(c for c in panel.columns if c not in allowed and not is_date_col(c))
+
+    def _admits(c: str) -> bool:
+        return c in allowed or is_date_col(c) or c.startswith(VIEW_NAMESPACE + ".")
+
+    extra = sorted(c for c in panel.columns if not _admits(c))
     if extra:
         issues.append(f"unexpected column(s) {extra}")
     if not _is_temporal_dtype(panel.schema[TIME_COL]):
@@ -144,7 +149,7 @@ def conform_panel(
     for msg in issues:
         warnings.warn(f"W-SOURCE-PANEL source{src} {msg}", PanelConformanceWarning, stacklevel=2)
     if issues:
-        panel = panel.select([c for c in panel.columns if c in allowed or is_date_col(c)])
+        panel = panel.select([c for c in panel.columns if _admits(c)])
         if missing_fields:
             panel = panel.with_columns([_null_series(f, panel.height) for f in missing_fields])
     # normalize the time column and any date coordinates to the canonical period-end Datetime

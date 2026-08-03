@@ -40,6 +40,7 @@ class Manifest:
     columns: tuple[str, ...]           # physical view columns, e.g. ("views.factor.value", ...)
     panel_key: str = ""                # fingerprint of frame-affecting config knobs (periods/pit/strict)
     group_hash: dict = field(default_factory=dict)  # by-col -> hash of grouping; a change forces rebuild
+    frequency: str | None = None       # the view's grid frequency (ViewSource declares it for alignment)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -51,7 +52,7 @@ class Manifest:
             expr_hash=d["expr_hash"], sources=tuple(d["sources"]),
             freshness=dict(d["freshness"]), built_at=d["built_at"],
             columns=tuple(d["columns"]), panel_key=d.get("panel_key", ""),
-            group_hash=dict(d.get("group_hash", {})),
+            group_hash=dict(d.get("group_hash", {})), frequency=d.get("frequency"),
         )
 
 

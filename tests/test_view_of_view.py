@@ -89,3 +89,20 @@ def test_in_dep_closure_self_reference_is_cycle(tmp_path):
     assert mgr._in_dep_closure("comp", {"comp"}, {}, None) is True
     # a plain leaf dep does not reach back to the target
     assert mgr._in_dep_closure("comp", {"rating"}, {}, None) is False
+
+
+# --- T3: record view-dep fingerprints at build; invalidate on dep change --------------------------
+
+def test_build_records_view_dep_fingerprints_and_invalidates(tmp_path):
+    mgr = _mgr(tmp_path)
+    _seed_rating(mgr.store, tok="hr", built="2026-08-04T00:00:00")
+    comp = _decl(prepare("track model comp {\n  export c = views.rating.score + 1.0\n}", stdlib=False),
+                 "comp")
+    mgr._full_build(comp, {}, None)
+    mf = mgr.store.manifest("comp")
+    assert set(mf.view_deps) == {"rating"}
+    assert mf.view_deps["rating"] == "hr:2026-08-04T00:00:00"    # the dep's fingerprint at build time
+    assert mgr.is_stale(comp, {}) is False                       # nothing changed -> served from store
+    # the dep is rebuilt (new built_at) -> the dependent is coarsely invalidated
+    _seed_rating(mgr.store, tok="hr", built="2026-08-05T09:00:00")
+    assert mgr.is_stale(comp, {}) is True

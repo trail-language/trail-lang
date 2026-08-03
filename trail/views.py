@@ -217,6 +217,7 @@ class ViewManager:
             built_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             columns=tuple(cols), panel_key=_panel_key(self.config),
             group_hash=group_hash or {}, frequency=decl.frequency,
+            view_deps=self._view_dep_fingerprints(self._view_deps(decl, universes)),
         )
 
     def _compiled(self, decl, universes):

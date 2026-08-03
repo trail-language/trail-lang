@@ -53,6 +53,17 @@ def test_manifest_frequency_roundtrips_and_defaults():
     assert Manifest.from_dict(d).frequency is None
 
 
+def test_manifest_view_deps_roundtrips_and_defaults():
+    mf = Manifest("comp", "model", ("c",), "h", ("fmp",), {"fmp": None},
+                  "2026-08-04T00:00:00", ("views.comp.c",), view_deps={"rating": "hr:t0"})
+    back = Manifest.from_dict(mf.to_dict())
+    assert back.view_deps == {"rating": "hr:t0"}
+    assert back == mf
+    d = mf.to_dict()
+    d.pop("view_deps")                            # an old manifest predating view-of-view
+    assert Manifest.from_dict(d).view_deps == {}
+
+
 def test_store_rejects_traversing_names(tmp_path):
     import pytest
     s = LocalDiskViewStore({"dir": str(tmp_path)})

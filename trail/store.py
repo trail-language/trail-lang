@@ -41,6 +41,7 @@ class Manifest:
     panel_key: str = ""                # fingerprint of frame-affecting config knobs (periods/pit/strict)
     group_hash: dict = field(default_factory=dict)  # by-col -> hash of grouping; a change forces rebuild
     frequency: str | None = None       # the view's grid frequency (ViewSource declares it for alignment)
+    view_deps: dict = field(default_factory=dict)   # dep view name -> its fingerprint; a change forces rebuild
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -53,6 +54,7 @@ class Manifest:
             freshness=dict(d["freshness"]), built_at=d["built_at"],
             columns=tuple(d["columns"]), panel_key=d.get("panel_key", ""),
             group_hash=dict(d.get("group_hash", {})), frequency=d.get("frequency"),
+            view_deps=dict(d.get("view_deps", {})),
         )
 
 

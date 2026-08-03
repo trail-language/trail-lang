@@ -246,7 +246,11 @@ class ViewManager:
         """Build every stale tracked view in `program`, writing each to the store. Returns the names
         that were (re)computed; an empty list means all tracked views were served from the store.
         `entities` is intentionally ignored for the persisted artifact: a tracked view is always the
-        full universe, so a scoped request can never overwrite it with a subset."""
+        full universe, so a scoped request can never overwrite it with a subset.
+
+        Eager pre-build helper (declaration order); NOT view-of-view-aware — it neither orders by
+        view-deps nor rejects cycles. The live request path is `serve`, which does both; a program
+        mixing view-of-view deps should be driven through `serve` (as run_tool does), not here."""
         built = []
         for decl in self.tracked(program):
             if self.is_stale(decl, universes):
@@ -320,25 +324,27 @@ class ViewManager:
         return merged
 
     def serve(self, decl, universes, decls=None, entities=None, _visiting=()):
-        """Return `decl`'s persisted frame. An entity-scoped request computes + returns WITHOUT
-        persisting (a scoped rescore must never overwrite the full stored view). Otherwise: materialize
-        any referenced tracked views first (view-of-view — same-program deps in `decls` are built
-        recursively, in topological order; cross-run deps are used from the store), rejecting reference
-        cycles; then rebuild fully on a recipe change OR a changed view-dep; else consult the source
-        changefeed — recompute only the dirty footprint when one exists, else a full rebuild. Serve
-        stored unchanged when nothing changed."""
-        if entities is not None:                    # scoped rescore: compute + return, never persist
-            frame, _ = self.build_frame(decl, universes, entities)
-            return frame
+        """Return `decl`'s frame. First materialize any referenced tracked views (view-of-view —
+        same-program deps in `decls` are built recursively in topological order as full persisted views;
+        cross-run deps are used from the store), rejecting reference cycles (E-VIEW-CYCLE). An
+        entity-scoped request then computes + returns WITHOUT persisting the dependent (a scoped rescore
+        must never overwrite the full stored view). Otherwise rebuild fully on a recipe change OR a
+        changed view-dep; else consult the source changefeed — recompute only the dirty footprint when
+        one exists, else a full rebuild; serve stored unchanged when nothing changed."""
         if decl.name in _visiting:                  # recursion guard (belt-and-suspenders vs the closure)
             raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
         deps = self._view_deps(decl, universes)
         if self._in_dep_closure(decl.name, deps, universes, decls):
             raise ValueError(f"E-VIEW-CYCLE view '{decl.name}' is part of a reference cycle")
-        for dep in sorted(deps):                    # materialize same-program deps before building
+        # Materialize same-program deps first (always as FULL persisted views, even for a scoped
+        # request) so the build below reads real dep values, never silent nulls from an absent dep.
+        for dep in sorted(deps):
             dd = (decls or {}).get(dep)
             if dd is not None:
                 self.serve(dd, universes, decls=decls, _visiting=_visiting + (decl.name,))
+        if entities is not None:                    # scoped rescore: compute + return, never persist
+            frame, _ = self.build_frame(decl, universes, entities)
+            return frame
         mf = self.store.manifest(decl.name)
         if (mf is None or mf.expr_hash != expr_hash(decl, universes)
                 or mf.panel_key != _panel_key(self.config)

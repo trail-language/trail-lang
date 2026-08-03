@@ -128,6 +128,20 @@ def test_serve_materializes_same_program_dep_first(tmp_path):
     assert (merged["views.b"] == merged["views.a"] * 2.0).all()   # b computed over the fresh dep
 
 
+def test_serve_scoped_request_materializes_dep(tmp_path):
+    # a scoped (entity-filtered) view-of-view request must still build its dep first, so the scoped
+    # result reads real dep values rather than silent nulls from an unbuilt dependency
+    mgr = _mgr(tmp_path)
+    prog = prepare("track signal a at annual = income.revenue\n"
+                   "track signal b at annual = views.a * 2.0", stdlib=False)
+    decls = _tracked_map(mgr, prog)
+    scoped = mgr.serve(decls["b"], {}, decls=decls, entities=["AAA"])
+    assert mgr.store.read("a") is not None                   # dep materialized even on the scoped path
+    assert scoped.height > 0
+    assert scoped["views.b"].null_count() == 0               # no silent nulls
+    assert set(scoped["entity"].unique().to_list()) == {"AAA"}
+
+
 def test_serve_rejects_self_reference(tmp_path):
     mgr = _mgr(tmp_path)
     prog = prepare("track signal s at annual = views.s", stdlib=False)

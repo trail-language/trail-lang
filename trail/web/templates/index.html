@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trail REPL — Web Console</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="topbar-left">
+      <span class="logo">❯</span>
+      <span class="title">Trail REPL</span>
+      <span class="subtitle">Web Console</span>
+    </div>
+    <div class="topbar-right">
+      <button id="btn-new" title="New session" onclick="app.newSession()">⊕ New</button>
+      <button id="btn-sessions" title="Session list" onclick="app.toggleSessionList()">☰ Sessions</button>
+      <button id="btn-clear" title="Clear output" onclick="app.clearOutput()">✕ Clear</button>
+    </div>
+  </div>
+
+  <!-- Session sidebar -->
+  <div id="sidebar" class="hidden">
+    <div class="sidebar-header">
+      <span>Sessions</span>
+      <button onclick="app.toggleSessionList()">✕</button>
+    </div>
+    <div id="session-list"></div>
+  </div>
+
+  <!-- Main terminal area -->
+  <div id="terminal">
+    <div id="output"></div>
+    <div id="input-line">
+      <span class="prompt">trail></span>
+      <input type="text" id="input" autocomplete="off" spellcheck="false" autofocus>
+    </div>
+  </div>
+
+  <!-- Output panel (for tables) -->
+  <div id="output-panel" class="hidden">
+    <div class="panel-header">
+      <span id="panel-title">Results</span>
+      <button onclick="app.closePanel()">✕</button>
+    </div>
+    <div id="panel-content"></div>
+  </div>
+
+  <!-- Loading indicator -->
+  <div id="loading" class="hidden">⋯</div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

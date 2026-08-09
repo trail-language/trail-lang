@@ -25,13 +25,15 @@ def run_repl(session: ReplSession) -> None:
         from prompt_toolkit.completion import ThreadedCompleter
         from prompt_toolkit.history import FileHistory
         from prompt_toolkit.key_binding import KeyBindings
-        from prompt_toolkit.lexers import PygmentsLexer
         from prompt_toolkit.shortcuts import print_formatted_text, HTML
         from prompt_toolkit.styles import Style
     except ImportError:
         print("prompt_toolkit is required for the REPL.", file=sys.stderr)
         print("Install it with: pip install trail-lang[repl]", file=sys.stderr)
         sys.exit(1)
+
+    # ── Completions ─────────────────────────────────────────────────
+    from trail.repl.completer import TrailCompleter
 
     # ── Style ────────────────────────────────────────────────────────
     style = Style.from_dict({
@@ -45,7 +47,6 @@ def run_repl(session: ReplSession) -> None:
         """Build the prompt string."""
         return "trail> "
 
-    # ── Completions ─────────────────────────────────────────────────
     completer = TrailCompleter(session)
 
     # ── Key bindings ─────────────────────────────────────────────────

@@ -44,7 +44,7 @@ class TrailCompleter:
     def __init__(self, session) -> None:  # noqa: ANN001
         self.session = session
 
-    def get_completions(self, document, complete_event):  # noqa: ANN001
+    def complete(self, document, event, *args, **kwargs):  # noqa: ANN001
         """Return completions for the current word under cursor."""
         from prompt_toolkit.completion import Completion
 
@@ -57,11 +57,9 @@ class TrailCompleter:
         last_dot = text.rfind(".")
         if last_dot == -1:
             prefix = text
-            full_text = text
         else:
             # Check if we're inside a dotted path
             prefix = text[last_dot + 1:]
-            full_text = text
 
         if not prefix:
             return
@@ -71,7 +69,6 @@ class TrailCompleter:
 
         # Field namespaces (only when we see a dot prefix)
         if last_dot >= 0:
-            ns_prefix = text[:last_dot + 1]  # e.g., "income."
             for ns in FIELD_NAMESPACES:
                 if ns.startswith(prefix_lower):
                     completions.append(Completion(ns, start_position=-len(prefix)))

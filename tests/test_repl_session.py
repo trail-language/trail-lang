@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from trail.repl import ReplSession, Result
+from trail.repl import ReplSession
 
 
 class TestReplSession:

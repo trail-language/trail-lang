@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import polars as pl
-import pytest
 
 from trail.repl.format import truncate_table
 

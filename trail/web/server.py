@@ -5,10 +5,12 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from trail.repl.session import ReplSession, Result
+from trail.repl.session import ReplSession
 
 
 # ── Session store ─────────────────────────────────────────────────────
@@ -129,10 +131,6 @@ class APIServer:
 
 
 # ── HTTP Handlers ─────────────────────────────────────────────────────
-
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlparse
-
 
 class REPLHandler(BaseHTTPRequestHandler):
     """HTTP handler for the REPL web API and UI."""

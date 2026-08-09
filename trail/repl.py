@@ -19,8 +19,7 @@ import polars as pl
 from trail import ast
 from trail.compiler import compile_expr as _compile_expr, compile_model, compile_signal
 from trail.config import DEFAULT_CONFIG
-from trail.parser import parse_repl_line, parse_program
-from trail.pipeline import prepare
+from trail.parser import parse_repl_line
 from trail.source import LoadRequest
 from trail.sources import FixtureSource
 

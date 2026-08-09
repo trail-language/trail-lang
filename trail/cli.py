@@ -255,3 +255,28 @@ def mcp_cmd(transport: str, host: str, port: int) -> None:
     except RuntimeError as e:
         click.echo(f"ERROR {e}")
         sys.exit(1)
+
+
+@main.command("repl")
+def repl_cmd() -> None:
+    """Launch the interactive Trail REPL.
+
+    Features tab-completion, history, and formatted table output.
+    Requires `pip install trail-lang[repl]` for prompt_toolkit.
+    """
+    from trail.repl.session import ReplSession
+    from trail.repl.loop import run_repl
+    session = ReplSession()
+    run_repl(session)
+
+
+@main.command("web")
+@click.option("--host", default="127.0.0.1", help="Bind host.")
+@click.option("--port", default=8080, type=int, help="Bind port.")
+def web_cmd(host: str, port: int) -> None:
+    """Launch the Trail REPL Web Console.
+
+    Opens a browser-accessible terminal-like interface at http://<host>:<port>.
+    """
+    from trail.web.server import start_server
+    start_server(host=host, port=port)

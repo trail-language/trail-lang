@@ -31,6 +31,24 @@ model quality on us_main at annual {
 pip install trail-lang        # or: uv add trail-lang
 ```
 
+### Container image
+
+Released tags publish a multi-arch image to GHCR:
+
+```bash
+docker run --rm -p 3000:3000 ghcr.io/trail-language/trail-lang:latest
+# serves the MCP tools over streamable-HTTP at http://localhost:3000/mcp
+```
+
+The image contains the language and the MCP server **only** — no data-source adapters, so it
+answers `functions`/`schema`/`validate` and evaluates `{"rows": …}` / `{"file": …}` data out of
+the box. To serve `{"config": …}` from live providers, build on top and add the adapters you need:
+
+```dockerfile
+FROM ghcr.io/trail-language/trail-lang:0.17.0
+RUN pip install trail-fmp trail-edgar        # whichever sources your trail.yaml declares
+```
+
 ## CLI
 
 ```bash

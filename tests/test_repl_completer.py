@@ -33,22 +33,24 @@ class TestTrailCompleter:
         assert "model" in KEYWORDS
         assert "export" in KEYWORDS
 
+    @pytest.mark.skipif(
+        not pytest.importorskip("prompt_toolkit.document", reason="prompt_toolkit not installed"),
+        reason="prompt_toolkit not installed"
+    )
     def test_completer_returns_completion_items(self, session, completer):
         """Completer generates Completion objects for partial prefixes."""
         from prompt_toolkit.document import Document
 
         # "ro" should match roll_mean, roll_sum, etc.
         doc = Document(text="ro", cursor_position=2)
-        completions = list(completer.get_completions(doc, None))
+        completions = list(completer.complete(doc, None))
         texts = [c.text for c in completions]
         assert any("roll_mean" in t or "roll_sum" in t for t in texts), f"Expected roll_* in: {texts}"
 
     def test_completer_handles_prefix_match(self, session, completer):
         """Completer suggests functions starting with typed prefix."""
-        from prompt_toolkit.document import Document
-
-        doc = Document(text="a", cursor_position=1)
-        completions = list(completer.get_completions(doc, None))
+        doc = type('MockDoc', (), {'text_before_cursor': 'a'})()
+        completions = list(completer.complete(doc, None))
         texts = [c.text for c in completions]
         assert any(t.startswith("a") for t in texts), f"Expected 'a*' completions: {texts}"
 
@@ -56,14 +58,12 @@ class TestTrailCompleter:
         """User-defined names are suggested in completions."""
         session.definitions["my_margin"] = None
         c = TrailCompleter(session)
-        from prompt_toolkit.document import Document
-        doc = Document(text="my_m", cursor_position=4)
-        completions = list(c.get_completions(doc, None))
+        doc = type('MockDoc', (), {'text_before_cursor': 'my_m'})()
+        completions = list(c.complete(doc, None))
         assert any(c.text == "my_margin" for c in completions), f"Expected 'my_margin' in: {[c.text for c in completions]}"
 
     def test_completer_handles_empty_input(self, session, completer):
         """Empty input returns no completions."""
-        from prompt_toolkit.document import Document
-        doc = Document(text="", cursor_position=0)
-        completions = list(completer.get_completions(doc, None))
+        doc = type('MockDoc', (), {'text_before_cursor': ''})()
+        completions = list(completer.complete(doc, None))
         assert len(completions) == 0

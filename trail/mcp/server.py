@@ -62,10 +62,16 @@ def _register(server) -> None:
         return tools.schema_tool(namespace=namespace)
 
     @server.tool()
-    def validate(source: str, no_stdlib: bool = False) -> dict:
+    def validate(source: str, no_stdlib: bool = False, data: dict | None = None) -> dict:
         """Parse + validate trail source (an expression, model, or full program). Returns
-        {valid, issues:[{severity,code,message}]}."""
-        return tools.validate_tool(source, no_stdlib=no_stdlib)
+        {valid, issues:[{severity,code,message}]}.
+
+        Pass `data` (same shape as `run`/`describe`, e.g. {"config": path}) to ALSO check
+        that the configured sources actually serve every field the program references.
+        Without it, validation covers the field vocabulary only -- a source declared under
+        `sources:` but missing from `precedence` serves nothing, and the model validates
+        clean then fails at run time with E-FIELD-UNSERVED after the fetch."""
+        return tools.validate_tool(source, no_stdlib=no_stdlib, data=data)
 
     @server.tool()
     def describe(data: dict, field: str | None = None) -> dict:

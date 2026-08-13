@@ -372,8 +372,30 @@ class ViewSource(DataSource):
 
     def __init__(self, options=None) -> None:
         super().__init__(options)
-        self.store = LocalDiskViewStore(self.options)   # requires options['dir']; namespace default "views"
+        # Resolve the store the SAME WAY the write path does, instead of assuming a
+        # local directory. The ViewStore interface is pluggable through
+        # `providers.views`, but this source used to hardcode LocalDiskViewStore and
+        # read `options["dir"]` -- an attribute no other ViewStore implementation has
+        # any reason to expose. The result was that a project configuring a custom
+        # store wrote its views there correctly and then could not compose them at
+        # all: `views.*` resolved to nothing, and every reference failed with
+        # E-FIELD-UNSERVED naming a column that was sitting in the store.
+        #
+        # `config_path` is the supported way in; `dir` still works for a direct
+        # local-disk construction, so existing callers are unaffected.
+        self.store = self._resolve_store()
         self.name = self.store.namespace
+
+    def _resolve_store(self):
+        store = self.options.get("store")
+        if store is not None:                       # already-constructed store
+            return store
+        config_path = self.options.get("config_path")
+        if config_path is not None:
+            from trail.config import load_config
+            from trail.providers import store_for_config
+            return store_for_config(load_config(config_path), config_path)
+        return LocalDiskViewStore(self.options)     # requires options['dir']
 
     def _views(self):
         for n in self.store.list():

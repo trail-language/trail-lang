@@ -148,6 +148,63 @@ def _phase_warnings(decl, out: list[Issue]) -> None:
                          "on_missing median is treated as skip until phase 2"))
 
 
+def _subexprs(node):
+    """Every node in an expression tree, depth-first. Generic over the frozen
+    dataclasses in `trail.ast`, so a new node type is walked without edits here."""
+    import dataclasses
+
+    yield node
+    if not dataclasses.is_dataclass(node):
+        return
+    for f in dataclasses.fields(node):
+        v = getattr(node, f.name, None)
+        for item in (v if isinstance(v, tuple) else (v,)):
+            if dataclasses.is_dataclass(item):
+                yield from _subexprs(item)
+
+
+def _cond_polarity(cond):
+    """(key, negated) for a ternary's condition, with one `not` peeled off."""
+    if isinstance(cond, ast.Not):
+        return repr(cond.operand), True
+    return repr(cond), False
+
+
+def _check_null_conditionals(exprs, out: list[Issue]) -> None:
+    """Warn when one condition drives both a positive and a negated ternary.
+
+    Conditions are three-valued: a null is neither true nor false, and BOTH
+    forms take their `else` branch on null. So
+
+        score = raw   if g else -1        -> null gives -1   (treated as false)
+        grade = "BAD" if not g else "OK"  -> null gives "OK" (treated as true)
+
+    disagree about exactly the rows where `g` is null, and nothing about that is
+    an error - each expression is individually correct. Found in production: a
+    gate flag null on 1,170 of 47,485 rows produced companies simultaneously
+    SCORED as vetoed and GRADED as fine, and anything filtering on the grade
+    picked up names carrying the veto sentinel as their score.
+
+    Make the condition definite (e.g. `count_true(g) == 1`) so both forms agree.
+    """
+    pos: dict[str, None] = {}
+    neg: dict[str, None] = {}
+    for e in exprs:
+        for node in _subexprs(e):
+            if isinstance(node, ast.Ternary):
+                key, negated = _cond_polarity(node.cond)
+                (neg if negated else pos)[key] = None
+    for key in pos:
+        if key in neg:
+            out.append(Issue(
+                "warning", "W-NULL-COND",
+                "the same condition is used both directly and negated in "
+                "conditionals; on a null it is treated as false in one and true "
+                "in the other, so the two results disagree for those rows - make "
+                "it definite (e.g. count_true(x) == 1)"))
+            break
+
+
 def validate(program: ast.Program) -> list[Issue]:
     out: list[Issue] = []
     universes = {d.name for d in program.decls if isinstance(d, ast.UniverseDecl)}
@@ -191,6 +248,12 @@ def validate(program: ast.Program) -> list[Issue]:
                 _check_expr(decl.where, set(), out)
             case ast.ModelDecl():
                 _phase_warnings(decl, out)
+                # Scoped per model: two models may legitimately use opposite
+                # polarities of the same flag without their results ever meeting.
+                _check_null_conditionals(
+                    [st.expr for st in decl.statements
+                     if isinstance(st, ast.Assignment) and st.expr is not None],
+                    out)
                 for col in sorted(_extract(ast.Program((decl,))).align_conflicts):
                     out.append(Issue("error", "E-ALIGN-CONFLICT",
                                      f"field '{col}' is referenced with conflicting @align coordinates "

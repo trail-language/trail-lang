@@ -36,13 +36,50 @@ def schema_tool(namespace: str | None = None) -> dict:
     return {"fields": _frame_records(catalog_core.fields(namespace))}
 
 
-def validate_tool(source: str, no_stdlib: bool = False, base_dir: str | None = None) -> dict:
+def validate_tool(source: str, no_stdlib: bool = False, base_dir: str | None = None,
+                  data: dict | None = None) -> dict:
+    """Validate `source`. With `data`, also check that the configured sources SERVE it.
+
+    Without a config, validation can only resolve the field VOCABULARY -- whether
+    `fmp.revenue` is a known field -- not whether any configured source actually
+    provides it. Those are different questions, and the gap is expensive: a source
+    declared under `sources:` but omitted from `precedence` serves nothing, so a
+    model referencing it validates clean and then fails at run time with
+    E-FIELD-UNSERVED, after the fetch. On a full-universe panel that is hours.
+
+    `data` is the same argument `run` and `describe` take, so a caller that has a
+    config can get the check for free. Coverage problems are reported as ordinary
+    error issues; nothing is fetched.
+    """
     try:
         program = prepare(source, stdlib=not no_stdlib, path=base_dir)
     except _PARSE_ERRORS as e:
         return {"valid": False, "issues": [{"severity": "error", **to_error(e)["error"]}]}
     issues = [{"severity": i.severity, "code": i.code, "message": i.message} for i in validate(program)]
+    if data is not None:
+        issues.extend(_coverage_check(program, data))
     return {"valid": not any(i["severity"] == "error" for i in issues), "issues": issues}
+
+
+def _coverage_check(program, data: dict) -> list[dict]:
+    """Coverage issues for `program` under the config named by `data`.
+
+    A config that cannot be loaded is reported rather than swallowed: silently
+    skipping the check would restore exactly the blind spot this exists to close.
+    """
+    from trail.config import load_config
+    from trail.deps import extract
+    from trail.sources import coverage_issues
+    try:
+        config = load_config(data["config"]) if "config" in data else None
+        if config is None:
+            return []
+        fields = set(extract(program).fields)
+        return [{"severity": "error", "code": code, "message": message}
+                for code, message in coverage_issues(config, fields)]
+    except Exception as e:  # noqa: BLE001 - surfaced, never hidden
+        return [{"severity": "warning", "code": "W-COVERAGE-UNCHECKED",
+                 "message": f"source coverage could not be checked: {type(e).__name__}: {e}"}]
 
 
 def _validate_or_error(program):

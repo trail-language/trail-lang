@@ -378,20 +378,8 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
     serving = {r: [s for s in chain_of[r] if r in claimable_by_source.get(s, ())] for r in pending}
 
     requested_finals = {r[2] for r in requests}  # what the compiler reads (excludes injected bridges)
-    for r in pending:  # a request no source in its chain can serve is an error (a bridge is skipped)
-        fq, canon, final, ent, src = r
-        if serving[r]:
-            continue
-        if src is not None:
-            raise ConfigError(f"E-PIN-UNSERVED '@ {src}' pins a source that does not provide "
-                              f"'{canon}'" + (f" at frequency '{fq}'" if fq else ""))
-        if fq is not None:
-            raise ConfigError(
-                f"E-FREQ-UNAVAILABLE no configured source provides '{canon}' at frequency '{fq}'")
-        if final not in bridges:  # an unserved injected bridge gets align's E-DIM-UNMAPPED instead
-            raise ConfigError(
-                f"E-FIELD-UNSERVED no configured source provides '{canon}' "
-                "(the model references it, so the run would fail downstream)")
+    for code, message in _unserved(pending, serving, bridges):
+        raise ConfigError(message)
 
     def _coalesced(r) -> bool:
         """A field is coalesced when >1 source in its chain serves it; entity/source pins and
@@ -543,3 +531,77 @@ def _load_panel(config: Config, fields: set[str], target_freq: str | None,
         yr = pl.col(TIME_COL).dt.year()
         panel = panel.filter((yr >= lo) & (yr <= hi))
     return panel
+
+
+def _unserved(pending, serving, bridges) -> list[tuple[str, str]]:
+    """Every (code, message) for a request no source in its chain can serve.
+
+    Split out so the load path and `validate` share one implementation. They used
+    to differ by omission: validate resolved the FIELD VOCABULARY only, so a model
+    naming a field whose source was missing from `precedence` passed validation and
+    then died at run time -- after the fetch, which for a large panel is hours in.
+    A caller that can see the config should be able to learn this in milliseconds.
+
+    Returns all of them; the load path raises on the first, validate reports the lot.
+    """
+    out: list[tuple[str, str]] = []
+    for r in pending:
+        fq, canon, final, ent, src = r
+        if serving[r]:
+            continue
+        if src is not None:
+            out.append(("E-PIN-UNSERVED",
+                        f"E-PIN-UNSERVED '@ {src}' pins a source that does not provide "
+                        f"'{canon}'" + (f" at frequency '{fq}'" if fq else "")))
+        elif fq is not None:
+            out.append(("E-FREQ-UNAVAILABLE",
+                        f"E-FREQ-UNAVAILABLE no configured source provides '{canon}' "
+                        f"at frequency '{fq}'"))
+        elif final not in bridges:  # an unserved injected bridge gets align's E-DIM-UNMAPPED instead
+            out.append(("E-FIELD-UNSERVED",
+                        f"E-FIELD-UNSERVED no configured source provides '{canon}' "
+                        "(the model references it, so the run would fail downstream)"))
+    return out
+
+
+def coverage_issues(config: Config, fields: set[str], _get_src=None) -> list[tuple[str, str]]:
+    """Which of `fields` no configured source can serve, without fetching anything.
+
+    This is the check `validate` could not previously make: it resolves each field
+    through its precedence chain and asks the sources what they claim, but never
+    calls `load`. A source that is declared under `sources:` and omitted from
+    `precedence` serves nothing, and that omission is invisible until a run.
+    """
+    # Sources may open connections or set identities in __init__, so this owns the same
+    # construct-once / close-in-finally lifecycle as load_panel_for. Only capabilities()
+    # and available_fields() are called - never load() - so nothing is fetched.
+    _srcs: dict[str, DataSource] = {}
+    _owned = _get_src is None
+
+    if _owned:
+        def _get_src(sname: str) -> DataSource:          # noqa: F811 - deliberate local factory
+            if sname not in _srcs:
+                spec = config.sources[sname]
+                _srcs[sname] = resolve_driver(spec.driver)(spec.options)
+            return _srcs[sname]
+
+    try:
+        return _coverage_issues(config, fields, _get_src)
+    finally:
+        for _s in _srcs.values():
+            _s.close()
+
+
+def _coverage_issues(config: Config, fields: set[str], _get_src) -> list[tuple[str, str]]:
+    requests = {_parse_field(f) for f in fields}
+    base_reqs = {(fq, canon, src) for fq, canon, final, ent, src in requests}
+    bridges = _foreign_bridges_for(config, base_reqs, _get_src)
+    pending = sorted(requests | {(None, b, b, None, None) for b in bridges}, key=lambda r: r[2])
+    chain_of = {r: _chain_for(config, r[1], r[4]) for r in pending}
+    claimable_by_source: dict[str, set] = {}
+    for sname in _all_source_order(config):
+        routed = [r for r in pending if sname in chain_of[r]]
+        if routed:
+            claimable_by_source[sname] = set(_claimable(_get_src(sname), routed))
+    serving = {r: [s for s in chain_of[r] if r in claimable_by_source.get(s, ())] for r in pending}
+    return _unserved(pending, serving, bridges)

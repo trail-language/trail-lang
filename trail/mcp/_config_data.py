@@ -64,7 +64,12 @@ def _with_view_source(config, config_path):
     from trail.providers import store_for_config  # lazy: avoids importing the store at module load
     store = store_for_config(config, config_path)
     ns = store.namespace
-    src = SourceSpec(ns, "trail.views.ViewSource", {"dir": str(store.dir), "namespace": ns})
+    # Hand ViewSource the config, not a directory. Reading `store.dir` here assumed
+    # every ViewStore is local-disk-backed; `dir` is not part of the ViewStore
+    # interface, so any custom store raised AttributeError and (see the caller)
+    # silently disabled view composition entirely.
+    src = SourceSpec(ns, "trail.views.ViewSource",
+                     {"config_path": str(config_path), "namespace": ns})
     return replace(config, sources={**config.sources, ns: src},
                    precedence={**config.precedence, ns: [ns]})
 
@@ -93,8 +98,18 @@ def resolve_config_panel(config_path, decl, universes,
             config = _with_view_source(config, config_path)
             if decl is None:
                 fields = frozenset(_all_fields(config))
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - degraded, but never silently
+            # This used to be `pass`. A view store that could not be reached left
+            # `views.*` unserved with no signal at all, so a model referencing a
+            # stored view failed far downstream with E-FIELD-UNSERVED -- an error
+            # that points at the model rather than at the store that could not be
+            # opened. Degrading is still correct (a plain source load must not break
+            # because a view store is unavailable), but it has to say so.
+            warnings.warn(
+                f"W-VIEWSOURCE-UNAVAILABLE stored views could not be made queryable, "
+                f"so `views.*` fields will not resolve: {type(e).__name__}: {e}",
+                RuntimeWarning, stacklevel=2,
+            )
     # `entities` MUST be part of the key: an entity-scoped load produces a narrower panel, and
     # serving it to a later unscoped request would silently answer from a subset of the universe.
     scope = tuple(sorted(entities)) if entities else None

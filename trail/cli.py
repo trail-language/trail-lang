@@ -16,7 +16,7 @@ from trail.describe import render_describe
 from trail.macro import TrailFunctionError
 from trail.pipeline import TrailImportError, prepare
 from trail.source import ENTITY_COL
-from trail.sources import AlignmentWarning, PanelConformanceWarning, load_panel_for, resolve_driver
+from trail.sources import AlignmentWarning, PanelConformanceWarning, all_available_fields, load_panel_for
 from trail.validate import validate
 
 
@@ -78,25 +78,6 @@ def catalog_cmd(target: str | None, config_path: str | None) -> None:
     else:
         result = catalog_core.describe(tuple(target.split(".")), config)
     click.echo(str(result))
-
-
-def _all_available_fields(config: Config) -> set[str]:
-    """Every field the configured sources can serve (union of ``available_fields``). A source that
-    fails to construct (e.g. a missing credential) is skipped, so discovery stays usable offline."""
-    out: set[str] = set()
-    for spec in config.sources.values():
-        try:
-            src = resolve_driver(spec.driver)(spec.options)
-        except Exception:  # instantiation/credential failure: skip, don't abort discovery
-            continue
-        try:
-            out |= set(src.available_fields())
-        finally:
-            try:
-                src.close()
-            except Exception:
-                pass
-    return out
 
 
 def _scoped_panel(decl: ast.ModelDecl | ast.SignalDecl,
@@ -170,7 +151,7 @@ def describe_cmd(path: str, config_path: str | None, model_name: str | None,
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always", PanelConformanceWarning)
                 warnings.simplefilter("always", AlignmentWarning)
-                panel = load_panel_for(config, _all_available_fields(config))
+                panel = load_panel_for(config, all_available_fields(config))
             for w in caught:
                 if issubclass(w.category, (PanelConformanceWarning, AlignmentWarning)):
                     click.echo(f"WARN  {w.message}")
@@ -258,15 +239,30 @@ def mcp_cmd(transport: str, host: str, port: int) -> None:
 
 
 @main.command("repl")
-def repl_cmd() -> None:
+@click.option("--config", "config_path", default=None, type=click.Path(exists=True),
+              help="trail.yaml to run on (loads the configured sources; default: the bundled "
+                   "fixture panel).")
+@click.option("--model", "model_name", default=None,
+              help="Scope the session to this model: only a model/signal declaration named NAME "
+                   "is executed (mirrors `run --model`).")
+def repl_cmd(config_path: str | None, model_name: str | None) -> None:
     """Launch the interactive Trail REPL.
 
     Features tab-completion, history, and formatted table output.
     Requires `pip install trail-lang[repl]` for prompt_toolkit.
+    With `--config` the session runs on the configured data (trail.yaml); universe,
+    model/signal, def, and import declarations bind together across lines.
     """
     from trail.repl.session import ReplSession
     from trail.repl.loop import run_repl
-    session = ReplSession()
+    config = None
+    if config_path is not None:
+        try:
+            config = load_config(config_path)
+        except ConfigError as e:
+            click.echo(f"ERROR CONFIG {e}")
+            sys.exit(1)
+    session = ReplSession(config=config, config_path=config_path, model_scope=model_name)
     run_repl(session)
 
 

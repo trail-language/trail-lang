@@ -28,6 +28,7 @@ __all__ = [
     "fixture",
     "conform_panel",
     "load_panel_for",
+    "all_available_fields",
     "resolve_driver",
     "PanelConformanceWarning",
     "AlignmentWarning",
@@ -161,6 +162,25 @@ def conform_panel(
     if normalize:
         panel = panel.with_columns(normalize)
     return panel
+
+
+def all_available_fields(config: Config) -> set[str]:
+    """Every field the configured sources can serve (union of ``available_fields``). A source that
+    fails to construct (e.g. a missing credential) is skipped, so discovery stays usable offline."""
+    out: set[str] = set()
+    for spec in config.sources.values():
+        try:
+            src = resolve_driver(spec.driver)(spec.options)
+        except Exception:  # instantiation/credential failure: skip, don't abort discovery
+            continue
+        try:
+            out |= set(src.available_fields())
+        finally:
+            try:
+                src.close()
+            except Exception:
+                pass
+    return out
 
 
 def _source_freq(src) -> str:

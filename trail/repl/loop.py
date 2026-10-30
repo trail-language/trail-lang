@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import sys
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 from trail.repl.format import truncate_table
 from trail.repl.session import ReplSession
+
+try:
+    _VERSION = _pkg_version("trail-lang")
+except Exception:  # no installed dist metadata (e.g. running from a source checkout)
+    _VERSION = "dev"
 
 
 def run_repl(session: ReplSession) -> None:
@@ -23,9 +29,10 @@ def run_repl(session: ReplSession) -> None:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
         from prompt_toolkit.completion import ThreadedCompleter
+        from prompt_toolkit.formatted_text import HTML
         from prompt_toolkit.history import FileHistory
         from prompt_toolkit.key_binding import KeyBindings
-        from prompt_toolkit.shortcuts import print_formatted_text, HTML
+        from prompt_toolkit.shortcuts import print_formatted_text
         from prompt_toolkit.styles import Style
     except ImportError:
         print("prompt_toolkit is required for the REPL.", file=sys.stderr)
@@ -76,19 +83,20 @@ def run_repl(session: ReplSession) -> None:
         print_formatted_text(HTML(f"  <red>Error: {message}</red>"))
 
     # ── Main loop ───────────────────────────────────────────────────
+    # prompt_toolkit 3.x: the prompt template is `message` (a callable is allowed);
+    # there is no `prompt=` kwarg and no `search_prompt` parameter.
     session_obj = PromptSession(
-        prompt=prompt,
+        message=prompt,
         style=style,
         completer=ThreadedCompleter(completer),
         auto_suggest=AutoSuggestFromHistory(),
         key_bindings=bindings,
         history=FileHistory(str(Path.home() / ".trail_history")),
-        search_prompt="  search> ",
     )
 
     print()
     print_formatted_text(HTML(
-        "  <cyan>Trail REPL v0.17.0</cyan>"
+        f"  <cyan>Trail REPL v{_VERSION}</cyan>"
     ))
     print_formatted_text(HTML(
         "  <gray>Expression language for financial indicators.</gray>"

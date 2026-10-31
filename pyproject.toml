@@ -23,11 +23,11 @@ dependencies = [
     "polars>=1.20",
     "click>=8.1",
     "pyyaml>=6",
+    "prompt_toolkit>=3",
 ]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.2.0"]
-repl = ["prompt_toolkit>=3"]
 
 [project.urls]
 Homepage = "https://github.com/trail-language"
@@ -42,6 +42,11 @@ trail = "trail.cli:main"
 # same group, so `pip install trail-<name>` makes `driver: <name>` usable in trail.yaml.
 [project.entry-points."trail.sources"]
 fixture = "trail.sources:FixtureSource"
+
+# Declares the bundled fixture's field vocabulary (Approach X: the source owns its
+# namespace) so no-config validate/run/REPL accept fixture columns (income.*, ...).
+[project.entry-points."trail.schema"]
+fixture = "trail.fixtures:FIXTURE_SCHEMA_MAP"
 
 # Built-in writeable view-store providers (tracked-view persistence). Third-party stores register
 # additional drivers under the same group.

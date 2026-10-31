@@ -36,7 +36,7 @@ def run_repl(session: ReplSession) -> None:
         from prompt_toolkit.styles import Style
     except ImportError:
         print("prompt_toolkit is required for the REPL.", file=sys.stderr)
-        print("Install it with: pip install trail-lang[repl]", file=sys.stderr)
+        print("Install it with: pip install prompt_toolkit", file=sys.stderr)
         sys.exit(1)
 
     # ── Completions ─────────────────────────────────────────────────

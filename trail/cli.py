@@ -255,16 +255,16 @@ def init_cmd(driver: str, identity: str | None, tickers: str | None, years: str 
         click.echo(spec.install_hint)
         sys.exit(1)
     click.echo(f"{spec.package} {pkg_version} found (driver: {spec.driver})")
+    target = Path(output)
+    if target.exists() and not force:
+        click.echo(f"Error: {output} already exists (use --force to overwrite).")
+        sys.exit(1)
     provided = {"identity": identity, "tickers": tickers, "years": years}
     values = {f.name: (provided[f.name] if provided.get(f.name) is not None
                        else click.prompt(f.prompt, default=f.default))
               for f in spec.fields}
     values = {name: normalize_list(str(value)) for name, value in values.items()}
     text = spec.template.format(**values)
-    target = Path(output)
-    if target.exists() and not force:
-        click.echo(f"Error: {output} already exists (use --force to overwrite).")
-        sys.exit(1)
     target.write_text(text)
     click.echo(f"wrote {output}")
 

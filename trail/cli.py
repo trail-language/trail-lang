@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sys
 import warnings
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from pathlib import Path
 
 import click
 import polars as pl
@@ -13,6 +15,7 @@ from trail.compiler import compile_model, compile_signal, universe_chain
 from trail.config import Config, ConfigError, load_config
 from trail.deps import extract
 from trail.describe import render_describe
+from trail.init import normalize_list, resolve_init_spec
 from trail.macro import TrailFunctionError
 from trail.pipeline import TrailImportError, prepare
 from trail.source import ENTITY_COL
@@ -20,7 +23,16 @@ from trail.sources import AlignmentWarning, PanelConformanceWarning, all_availab
 from trail.validate import validate
 
 
+def _version_callback(ctx: click.Context, param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(f"trail {_pkg_version('trail-lang')}")
+    ctx.exit()
+
+
 @click.group()
+@click.option("--version", is_flag=True, expose_value=False, callback=_version_callback,
+              is_eager=True, help="Show the version and exit.")
 def main() -> None:
     """Trail - financial expression language."""
 
@@ -219,6 +231,44 @@ def signal_cmd(path: str, signal_name: str, config_path: str | None, no_stdlib: 
     _emit_result(result, out_path)
 
 
+@main.command("init")
+@click.argument("driver")
+@click.option("--identity", default=None, help="Identity value (skips the prompt).")
+@click.option("--tickers", default=None, help="Comma-separated tickers (skips the prompt).")
+@click.option("--years", default=None, help="'start,end' year bounds (skips the prompt).")
+@click.option("--force", is_flag=True, help="Overwrite an existing output file.")
+@click.option("--output", default="trail.yaml", show_default=True, help="Config file to write.")
+def init_cmd(driver: str, identity: str | None, tickers: str | None, years: str | None,
+             force: bool, output: str) -> None:
+    """Scaffold trail.yaml for DRIVER. The driver package registers its prompt fields and
+    template under the `trail.init` entry-point group; flags override the prompts (only
+    values not provided by a flag are prompted)."""
+    spec = resolve_init_spec(driver)
+    if spec is None:
+        click.echo(f"Error: the {driver} driver is not installed.")
+        click.echo(f"Install it with: pipx inject trail-lang trail-{driver}")
+        sys.exit(1)
+    try:
+        pkg_version = _pkg_version(spec.package)
+    except PackageNotFoundError:
+        click.echo(f"Error: the {driver} driver is not installed.")
+        click.echo(spec.install_hint)
+        sys.exit(1)
+    click.echo(f"{spec.package} {pkg_version} found (driver: {spec.driver})")
+    provided = {"identity": identity, "tickers": tickers, "years": years}
+    values = {f.name: (provided[f.name] if provided.get(f.name) is not None
+                       else click.prompt(f.prompt, default=f.default))
+              for f in spec.fields}
+    values = {name: normalize_list(str(value)) for name, value in values.items()}
+    text = spec.template.format(**values)
+    target = Path(output)
+    if target.exists() and not force:
+        click.echo(f"Error: {output} already exists (use --force to overwrite).")
+        sys.exit(1)
+    target.write_text(text)
+    click.echo(f"wrote {output}")
+
+
 @main.command("mcp")
 @click.option("--transport", default="stdio",
               type=click.Choice(["stdio", "streamable-http"]), help="MCP transport.")
@@ -249,7 +299,6 @@ def repl_cmd(config_path: str | None, model_name: str | None) -> None:
     """Launch the interactive Trail REPL.
 
     Features tab-completion, history, and formatted table output.
-    Requires `pip install trail-lang[repl]` for prompt_toolkit.
     With `--config` the session runs on the configured data (trail.yaml); universe,
     model/signal, def, and import declarations bind together across lines.
     """

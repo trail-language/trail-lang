@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.2.0"]
+repl = ["prompt_toolkit>=3"]
 
 [project.urls]
 Homepage = "https://github.com/trail-language"

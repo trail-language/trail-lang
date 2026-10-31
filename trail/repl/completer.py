@@ -39,13 +39,31 @@ KEYWORDS = [
 
 
 class TrailCompleter:
-    """Completer for Trail REPL using prompt_toolkit API."""
+    """Completer for Trail REPL using prompt_toolkit API.
+
+    Field namespaces come from the ACTIVE config's sources when one is loaded
+    (e.g. ``edgar.`` with ``--config``); the static list is the fixture fallback.
+    """
 
     def __init__(self, session) -> None:  # noqa: ANN001
         self.session = session
+        self._namespaces: list[str] | None = None
 
-    def complete(self, document, event, *args, **kwargs):  # noqa: ANN001
-        """Return completions for the current word under cursor."""
+    def _field_namespaces(self) -> list[str]:
+        if self.session.config is not None:
+            if self._namespaces is None:
+                from trail.sources import all_available_fields
+                self._namespaces = sorted(
+                    {f.split(".", 1)[0] + "." for f in all_available_fields(self.session.config)})
+            return self._namespaces
+        return FIELD_NAMESPACES
+
+    def get_completions(self, document, complete_event):  # noqa: ANN001
+        """Return completions for the current word under cursor.
+
+        prompt_toolkit 3.x entry point (the 2.x name was ``complete``); called by
+        ``ThreadedCompleter`` on a worker thread, so keep it side-effect-free.
+        """
         from prompt_toolkit.completion import Completion
 
         text = document.text_before_cursor
@@ -69,7 +87,7 @@ class TrailCompleter:
 
         # Field namespaces (only when we see a dot prefix)
         if last_dot >= 0:
-            for ns in FIELD_NAMESPACES:
+            for ns in self._field_namespaces():
                 if ns.startswith(prefix_lower):
                     completions.append(Completion(ns, start_position=-len(prefix)))
         else:

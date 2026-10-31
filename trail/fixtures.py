@@ -13,17 +13,33 @@ def fixture_fields() -> frozenset[str]:
     return frozenset(load_panel().columns) - {"entity", "time"}
 
 
+# Field-kind vocabulary for the fixture panel's columns - single source. tests/conftest.py
+# mirrors these lists into schema._CORE for the test session, so the test session and the
+# runtime can never drift. The values define the fixture's semantics - keep them verbatim.
+_FLOW_INCOME = ("revenue cogs gross_profit operating_income net_income interest_expense "
+                "income_tax_expense income_before_tax ebitda depreciation_amortization sga").split()
+_STOCK_INCOME = ("weighted_average_shares_diluted", "weighted_average_shares")
+_BALANCE = ("total_assets current_assets other_current_assets current_liabilities total_liabilities "
+            "long_term_debt total_debt total_equity retained_earnings accounts_receivable inventory "
+            "accounts_payable net_fixed_assets cash_and_equivalents cash_and_short_term_investments "
+            "minority_interest common_stock goodwill").split()
+_CASH = "cfo capex free_cash_flow stock_issued cfi cff net_change_in_cash dividends_paid".split()
+
+
 def fixture_schema_map() -> dict[str, str]:
-    """Field -> kind contributed via the trail.schema entry point so the bundled fixture
-    passes static validation (no-config `trail validate` / `trail run` / `ReplSession`
-    reference fixture columns by name)."""
-    return {
-        c: ("flow" if c.startswith("income.")
-            else "stock" if c.startswith(("balance.", "cash."))
-            else "price" if c.startswith("price.")
-            else "meta")
-        for c in fixture_fields()
-    }
+    """Field -> kind for the bundled fixture's columns - the fixture's own schema declaration,
+    contributed via the trail.schema entry point so no-config `trail validate` / `trail run` /
+    `ReplSession` pass static validation. tests/conftest.py mirrors these kinds into
+    `schema._CORE` for the test session (single source: this module)."""
+    out = {f"income.{f}": "flow" for f in _FLOW_INCOME}
+    out["income.eps_diluted"] = "per_share"
+    out.update({f"income.{f}": "stock" for f in _STOCK_INCOME})
+    out.update({f"balance.{f}": "stock" for f in _BALANCE})
+    out.update({f"cash.{f}": "flow" for f in _CASH})
+    out["price.adj_close"] = "price"
+    out["price.dividends"] = "per_share"
+    out.update({c: "meta" for c in fixture_fields() if c.startswith("meta.")})
+    return out
 
 
 _SECS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]

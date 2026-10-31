@@ -46,6 +46,9 @@ def test_fixture_schema_entry_point_registered():
     assert set(mapping) == fixture_fields()
     assert mapping["income.revenue"] == "flow"
     assert mapping["balance.total_assets"] == "stock"
-    assert mapping["cash.cfo"] == "stock"
     assert mapping["price.adj_close"] == "price"
     assert mapping["meta.sector"] == "meta"
+    # the three kinds that drifted in the original prefix-map version - keep this loud
+    assert mapping["cash.cfo"] == "flow"
+    assert mapping["income.eps_diluted"] == "per_share"
+    assert mapping["price.dividends"] == "per_share"

@@ -43,14 +43,14 @@ class TestTrailCompleter:
 
         # "ro" should match roll_mean, roll_sum, etc.
         doc = Document(text="ro", cursor_position=2)
-        completions = list(completer.complete(doc, None))
+        completions = list(completer.get_completions(doc, None) or [])
         texts = [c.text for c in completions]
         assert any("roll_mean" in t or "roll_sum" in t for t in texts), f"Expected roll_* in: {texts}"
 
     def test_completer_handles_prefix_match(self, session, completer):
         """Completer suggests functions starting with typed prefix."""
         doc = type('MockDoc', (), {'text_before_cursor': 'a'})()
-        completions = list(completer.complete(doc, None))
+        completions = list(completer.get_completions(doc, None) or [])
         texts = [c.text for c in completions]
         assert any(t.startswith("a") for t in texts), f"Expected 'a*' completions: {texts}"
 
@@ -59,11 +59,11 @@ class TestTrailCompleter:
         session.definitions["my_margin"] = None
         c = TrailCompleter(session)
         doc = type('MockDoc', (), {'text_before_cursor': 'my_m'})()
-        completions = list(c.complete(doc, None))
+        completions = list(c.get_completions(doc, None) or [])
         assert any(c.text == "my_margin" for c in completions), f"Expected 'my_margin' in: {[c.text for c in completions]}"
 
     def test_completer_handles_empty_input(self, session, completer):
         """Empty input returns no completions."""
         doc = type('MockDoc', (), {'text_before_cursor': ''})()
-        completions = list(completer.complete(doc, None))
+        completions = list(completer.get_completions(doc, None) or [])
         assert len(completions) == 0

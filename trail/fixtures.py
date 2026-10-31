@@ -12,6 +12,20 @@ def fixture_fields() -> frozenset[str]:
     """Canonical fields the fixture serves (its panel columns minus the index)."""
     return frozenset(load_panel().columns) - {"entity", "time"}
 
+
+def fixture_schema_map() -> dict[str, str]:
+    """Field -> kind contributed via the trail.schema entry point so the bundled fixture
+    passes static validation (no-config `trail validate` / `trail run` / `ReplSession`
+    reference fixture columns by name)."""
+    return {
+        c: ("flow" if c.startswith("income.")
+            else "stock" if c.startswith(("balance.", "cash."))
+            else "price" if c.startswith("price.")
+            else "meta")
+        for c in fixture_fields()
+    }
+
+
 _SECS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 _SECTOR = {"AAA": "Tech", "BBB": "Tech", "CCC": "Tech", "DDD": "Energy", "EEE": "Energy", "FFF": "Financials"}
 _EXCH = {"AAA": "NASDAQ", "BBB": "NASDAQ", "CCC": "NYSE", "DDD": "NYSE", "EEE": "NYSE", "FFF": "NYSE"}
@@ -80,3 +94,8 @@ def load_panel() -> pl.DataFrame:
             rows.append(row)
     df = pl.DataFrame(rows).with_columns(pl.col("time").cast(pl.Datetime("us")))
     return df.sort(["entity", "time"])
+
+
+#: entry-point target (pyproject `trail.schema` group): schema.py does `dict(ep.load())`,
+#: so the registered object must be a mapping, not a callable.
+FIXTURE_SCHEMA_MAP: dict[str, str] = fixture_schema_map()

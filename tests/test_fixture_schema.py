@@ -52,3 +52,12 @@ def test_fixture_schema_entry_point_registered():
     assert mapping["cash.cfo"] == "flow"
     assert mapping["income.eps_diluted"] == "per_share"
     assert mapping["price.dividends"] == "per_share"
+
+
+def test_kinds_match_canonical_for_drifted_columns():
+    # the same three columns through the active-schema path (kind_of) - in a clean install
+    # (no conftest _CORE patch) this reads exactly what the fixture's entry point registers
+    from trail.schema import kind_of
+    assert kind_of("cash.cfo") == "flow"
+    assert kind_of("income.eps_diluted") == "per_share"
+    assert kind_of("price.dividends") == "per_share"

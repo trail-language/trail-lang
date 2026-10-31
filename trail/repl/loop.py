@@ -1,6 +1,7 @@
 """Interactive loop for Trail REPL using prompt_toolkit."""
 from __future__ import annotations
 
+import html
 import sys
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -12,6 +13,17 @@ try:
     _VERSION = _pkg_version("trail-lang")
 except Exception:  # no installed dist metadata (e.g. running from a source checkout)
     _VERSION = "dev"
+
+
+def show_error(message: str) -> None:
+    """Display an error message.
+
+    The message is HTML-escaped: error text can contain raw < / > (e.g. polars error lines) and
+    prompt_toolkit's HTML formatter crashes on unescaped angle brackets (ExpatError -> REPL exit 1).
+    """
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.shortcuts import print_formatted_text
+    print_formatted_text(HTML(f"  <red>Error: {html.escape(message)}</red>"))
 
 
 def run_repl(session: ReplSession) -> None:
@@ -77,10 +89,6 @@ def run_repl(session: ReplSession) -> None:
         print_formatted_text(HTML(f"  <gray>({len(df)} rows × {len(df.columns)} cols)</gray>"))
         table = truncate_table(df)
         print_formatted_text(table)
-
-    def show_error(message: str) -> None:
-        """Display an error message."""
-        print_formatted_text(HTML(f"  <red>Error: {message}</red>"))
 
     # ── Main loop ───────────────────────────────────────────────────
     # prompt_toolkit 3.x: the prompt template is `message` (a callable is allowed);

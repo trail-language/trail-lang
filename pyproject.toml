@@ -1,6 +1,6 @@
 [project]
 name = "trail-lang"
-version = "0.19.0"
+version = "0.19.1"
 description = "A declarative expression language for financial indicators, scoring, and screening over entity panels"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2.0"]
+mcp = ["mcp>=1.2,<2"]
 
 [project.urls]
 Homepage = "https://github.com/trail-language"
@@ -54,7 +54,7 @@ fixture = "trail.fixtures:FIXTURE_SCHEMA_MAP"
 views_local = "trail.store:LocalDiskViewStore"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8", "pandas>=2.2", "pyarrow>=17", "mcp>=1.2.0", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "ruff>=0.8", "pandas>=2.2", "pyarrow>=17", "mcp>=1.2,<2", "pytest-asyncio>=0.24"]
 
 [build-system]
 requires = ["hatchling"]
